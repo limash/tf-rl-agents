@@ -7,18 +7,16 @@ import pickle
 import ray
 import numpy as np
 
-from goose_agent import deep_q_learning, actor_critic, storage, misc
+from goose_agent import deep_q_learning, storage, misc
 
 AGENTS = {"regular": deep_q_learning.RegularDQNAgent,
-          "categorical": deep_q_learning.CategoricalDQNAgent,
-          "actor_critic": actor_critic.ACAgent}
+          "categorical": deep_q_learning.CategoricalDQNAgent}
 
 BUFFERS = {"regular": storage.UniformBuffer,
-           "categorical": storage.UniformBuffer,
-           "actor_critic": storage.UniformBuffer}
+           "categorical": storage.UniformBuffer}
 
 
-def one_call(env_name, agent_name, data, make_sparse):
+def one_call(env_name, agent_name, data):
     batch_size = 16
     n_steps = 2
     buffer = BUFFERS[agent_name](min_size=batch_size)
@@ -27,7 +25,7 @@ def one_call(env_name, agent_name, data, make_sparse):
     agent = agent_object(env_name,
                          buffer.table_name, buffer.server_port, buffer.min_size,
                          n_steps,
-                         data, make_sparse)
+                         data)
     weights, mask, reward = agent.train(iterations_number=2000)
 
     data = {
@@ -40,10 +38,10 @@ def one_call(env_name, agent_name, data, make_sparse):
     print("Done")
 
 
-def multi_call(env_name, agent_name, data, make_sparse, plot=False):
+def multi_call(env_name, agent_name, data, plot=False):
     ray.init()
     parallel_calls = 10
-    batch_size = 64
+    batch_size = 16
     n_steps = 2
     buffer = BUFFERS[agent_name](min_size=batch_size)
 
@@ -52,7 +50,7 @@ def multi_call(env_name, agent_name, data, make_sparse, plot=False):
     agents = [agent_object.remote(env_name,
                                   buffer.table_name, buffer.server_port, buffer.min_size,
                                   n_steps,
-                                  data, make_sparse) for _ in range(parallel_calls)]
+                                  data) for _ in range(parallel_calls)]
     futures = [agent.train.remote(iterations_number=2000) for agent in agents]
     outputs = ray.get(futures)
 
@@ -88,4 +86,4 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_data = None
 
-    one_call(goose, 'categorical', init_data, make_sparse=False)
+    multi_call(goose, 'regular', init_data)

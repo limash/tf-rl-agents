@@ -15,7 +15,7 @@ class Agent(abc.ABC):
     def __init__(self, env_name,
                  buffer_table_name, buffer_server_port, buffer_min_size,
                  n_steps=2,
-                 data=None, make_sparse=False):
+                 data=None):
         # environments; their hyperparameters
         self._train_env = gym.make(env_name)
         self._eval_env = gym.make(env_name)
@@ -29,8 +29,6 @@ class Agent(abc.ABC):
 
         # data contains weighs, masks, and a corresponding reward
         self._data = data
-        self._is_sparse = make_sparse
-        assert not (not data and make_sparse), "Making a sparse model needs data of weights and mask"
 
         # networks
         self._model = None
@@ -209,16 +207,10 @@ class Agent(abc.ABC):
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                mean_episode_reward = self._evaluate_episodes_greedy(num_episodes=10)
+                mean_episode_reward = self._evaluate_episodes_greedy(num_episodes=100)
                 print(f"Final reward with a model policy is {mean_episode_reward}")
-                # do not update data in case of sparse net
-                # currently the only way to make a sparse net is from a dense net weights and mask
-                if self._is_sparse:
-                    weights = self._data['weights']
-                    mask = self._data['mask']
-                    mean_episode_reward = self._data['reward']
-                else:
-                    weights = self._model.get_weights()
-                    mask = list(map(lambda x: np.where(np.abs(x) < 0.1, 0., 1.), weights))
+
+                weights = self._model.get_weights()
+                mask = list(map(lambda x: np.where(np.abs(x) < 0.1, 0., 1.), weights))
 
         return weights, mask, mean_episode_reward

@@ -12,26 +12,42 @@ class RegularDQNAgent(Agent, ABC):
 
     def __init__(self, env_name, *args, **kwargs):
         super().__init__(env_name, *args, **kwargs)
-        raise NotImplementedError  # not implemented yet
 
         # train a model from scratch
         if self._data is None:
-            self._model = models.get_mlp(self._input_shape, self._n_outputs)
+            self._model = models.get_dqn(self._input_shape, self._n_outputs)
             # collect some data with a random policy (epsilon 1 corresponds to it) before training
-            self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
+            # self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
+            self._collect_until_items_created(epsilon=1, n_items=self._sample_batch_size)
         # continue a model training
-        elif self._data and not self._is_sparse:
-            self._model = models.get_mlp(self._input_shape, self._n_outputs)
+        elif self._data:
+            self._model = models.get_dqn(self._input_shape, self._n_outputs)
             self._model.set_weights(self._data['weights'])
             # collect date with epsilon greedy policy
             self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
-        # make and train a sparse model from a dense model
-        elif self._data and self._is_sparse:
-            weights = self._data['weights']
-            random_weights = [np.random.uniform(low=-0.03, high=0.03, size=item.shape) for item in weights]
-            self._model = models.get_sparse(random_weights, self._data['mask'])
-            # collect some data with a random policy (epsilon 1 corresponds to it) before training
-            self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
+
+        reward = self._evaluate_episodes_greedy(num_episodes=100)
+        print(f"Initial reward with a model policy is {reward}")
+
+    def _epsilon_greedy_policy(self, obsns, epsilon, info):
+        if np.random.rand() < epsilon:
+            # the first step after reset is arbitrary
+            if info is None:
+                available_actions = [0, 1, 2, 3]
+                actions = [random.choice(available_actions) for _ in range(self._n_players)]
+            # other random actions are within actions != opposite to the previous ones
+            else:
+                actions = [random.choice(info[i]['allowed_actions']) for i in range(self._n_players)]
+            return actions
+        else:
+            # it receives observations for all geese and predicts best actions one by one
+            best_actions = []
+            obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obsns)
+            for i in range(self._n_players):
+                obs = obsns[i]
+                Q_values = self._predict(obs)
+                best_actions.append(np.argmax(Q_values[0]))
+            return best_actions
 
     @tf.function
     def _training_step(self, actions, observations, rewards, dones, info):
@@ -58,8 +74,8 @@ class CategoricalDQNAgent(Agent):
         super().__init__(env_name, *args, **kwargs)
 
         min_q_value = 0
-        max_q_value = 51
-        self._n_atoms = 51
+        max_q_value = 1000
+        self._n_atoms = 101
         self._support = tf.linspace(min_q_value, max_q_value, self._n_atoms)
         self._support = tf.cast(self._support, tf.float32)
         cat_n_outputs = self._n_outputs * self._n_atoms
@@ -70,21 +86,13 @@ class CategoricalDQNAgent(Agent):
             # self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
             self._collect_until_items_created(epsilon=1, n_items=self._sample_batch_size)
         # continue a model training
-        elif self._data and not self._is_sparse:
+        elif self._data:
             self._model = models.get_dqn(self._input_shape, cat_n_outputs)
             self._model.set_weights(self._data['weights'])
             # collect date with epsilon greedy policy
             self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
-        # make and train a sparse model from a dense model
-        elif self._data and self._is_sparse:
-            raise NotImplementedError  # not implemented yet
-            weights = self._data['weights']
-            random_weights = [np.random.uniform(low=-0.03, high=0.03, size=item.shape) for item in weights]
-            self._model = models.get_sparse(random_weights, self._data['mask'])
-            # collect some data with a random policy (epsilon 1 corresponds to it) before training
-            self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
 
-        reward = self._evaluate_episodes_greedy(num_episodes=10)
+        reward = self._evaluate_episodes_greedy(num_episodes=100)
         print(f"Initial reward with a model policy is {reward}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
@@ -110,7 +118,7 @@ class CategoricalDQNAgent(Agent):
                 best_actions.append(np.argmax(Q_values[0]))
             return best_actions
 
-    # @tf.function
+    @tf.function
     def _training_step(self, actions, observations, rewards, dones, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
