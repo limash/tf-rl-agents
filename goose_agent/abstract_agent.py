@@ -17,7 +17,7 @@ class Agent(abc.ABC):
                  n_steps=2,
                  data=None, make_sparse=False):
         # environments; their hyperparameters
-        self._train_env = gym.make(env_name, debug=True)
+        self._train_env = gym.make(env_name)
         self._eval_env = gym.make(env_name)
         self._n_outputs = self._train_env.action_space.n  # number of actions
         space = self._train_env.observation_space
@@ -71,11 +71,13 @@ class Agent(abc.ABC):
         epsilon 0 corresponds to greedy policy
         """
         obsns = self._eval_env.reset()
+        obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
         while True:
             # if epsilon=0, greedy is disabled
-            actions = self._epsilon_greedy_policy(obsns, epsilon, info=None)
+            actions = self._epsilon_greedy_policy(obs_records, epsilon, info=None)
             obsns, rewards, dones, info = self._eval_env.step(actions)
+            obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
             rewards_storage += np.asarray(rewards)
             if all(dones):
                 break
@@ -207,7 +209,7 @@ class Agent(abc.ABC):
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                mean_episode_reward = self._evaluate_episodes_greedy(num_episodes=100)
+                mean_episode_reward = self._evaluate_episodes_greedy(num_episodes=10)
                 print(f"Final reward with a model policy is {mean_episode_reward}")
                 # do not update data in case of sparse net
                 # currently the only way to make a sparse net is from a dense net weights and mask

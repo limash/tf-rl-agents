@@ -102,7 +102,7 @@ class CategoricalDQNAgent(Agent):
             best_actions = []
             obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obsns)
             for i in range(self._n_players):
-                obs = obsns[0][i], obsns[1]
+                obs = obsns[i]
                 logits = self._predict(obs)
                 logits = tf.reshape(logits, [-1, self._n_outputs, self._n_atoms])
                 probabilities = tf.nn.softmax(logits)

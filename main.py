@@ -19,7 +19,7 @@ BUFFERS = {"regular": storage.UniformBuffer,
 
 
 def one_call(env_name, agent_name, data, make_sparse):
-    batch_size = 64
+    batch_size = 16
     n_steps = 2
     buffer = BUFFERS[agent_name](min_size=batch_size)
 
