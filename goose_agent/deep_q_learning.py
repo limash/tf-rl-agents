@@ -26,7 +26,7 @@ class RegularDQNAgent(Agent, ABC):
             # collect date with epsilon greedy policy
             self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
 
-        reward = self._evaluate_episodes_greedy(num_episodes=100)
+        reward = self._evaluate_episodes(num_episodes=100)
         print(f"Initial reward with a model policy is {reward}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
@@ -54,6 +54,12 @@ class RegularDQNAgent(Agent, ABC):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones)
+        # foo = observations[0].numpy()
+        # foo = np.moveaxis(foo, -1, 2)
+        # foo_first = first_observations[0].numpy()
+        # foo_first = np.moveaxis(foo_first, -1, 1)
+        # foo_last = last_observations[0].numpy()
+        # foo_last = np.moveaxis(foo_last, -1, 1)
 
         next_Q_values = self._model(last_observations)
         max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)
@@ -92,7 +98,7 @@ class CategoricalDQNAgent(Agent):
             # collect date with epsilon greedy policy
             self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
 
-        reward = self._evaluate_episodes_greedy(num_episodes=100)
+        reward = self._evaluate_episodes(num_episodes=100)
         print(f"Initial reward with a model policy is {reward}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):

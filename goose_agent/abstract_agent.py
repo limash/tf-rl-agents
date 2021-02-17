@@ -72,7 +72,6 @@ class Agent(abc.ABC):
         obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
         while True:
-            # if epsilon=0, greedy is disabled
             actions = self._epsilon_greedy_policy(obs_records, epsilon, info=None)
             obsns, rewards, dones, info = self._eval_env.step(actions)
             obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
@@ -81,10 +80,10 @@ class Agent(abc.ABC):
                 break
         return rewards_storage.mean()
 
-    def _evaluate_episodes_greedy(self, num_episodes=3):
+    def _evaluate_episodes(self, num_episodes=3, epsilon=0):
         episode_rewards = 0
         for _ in range(num_episodes):
-            episode_rewards += self._evaluate_episode()
+            episode_rewards += self._evaluate_episode(epsilon)
         return episode_rewards / num_episodes
 
     def _collect_trajectories_from_episode(self, epsilon):
@@ -193,7 +192,7 @@ class Agent(abc.ABC):
             self._training_step(*experiences, info=info)
 
             if step_counter % eval_interval == 0:
-                mean_episode_reward = self._evaluate_episodes_greedy()
+                mean_episode_reward = self._evaluate_episodes()
                 print("\rTraining step: {}, reward: {}, eps: {:.3f}".format(step_counter,
                                                                             mean_episode_reward,
                                                                             self._epsilon))
@@ -207,7 +206,7 @@ class Agent(abc.ABC):
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                mean_episode_reward = self._evaluate_episodes_greedy(num_episodes=100)
+                mean_episode_reward = self._evaluate_episodes(num_episodes=100)
                 print(f"Final reward with a model policy is {mean_episode_reward}")
 
                 weights = self._model.get_weights()

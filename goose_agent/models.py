@@ -4,29 +4,46 @@ def mlp_layer(x):
     from tensorflow import keras
     import tensorflow.keras.layers as layers
 
-    x = layers.Dense(1000, kernel_initializer="he_normal",
-                     kernel_regularizer=keras.regularizers.l2(0.01),
-                     use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.ELU()(x)
+    # initializer = "he_normal"
+    initializer = keras.initializers.VarianceScaling(
+        scale=2.0, mode='fan_in', distribution='truncated_normal')
 
-    x = layers.Dense(500, kernel_initializer="he_normal",
+    x = layers.Dense(1000, kernel_initializer=initializer,
                      kernel_regularizer=keras.regularizers.l2(0.01),
                      use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.ELU()(x)
+    # x = layers.ReLU()(x)
+
+    x = layers.Dense(500, kernel_initializer=initializer,
+                     kernel_regularizer=keras.regularizers.l2(0.01),
+                     use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
+    # x = layers.ReLU()(x)
 
     return x
 
 
 def conv_layer(x):
     import tensorflow.keras.layers as layers
+    from tensorflow import keras
 
-    # input is is (7, 11, 4)
-    x = layers.Conv2D(64, 5, activation='elu', kernel_initializer='he_normal', padding='same')(x)
-    x = layers.Conv2D(64, 3, activation='elu', kernel_initializer='he_normal', padding='valid')(x)
-    x = layers.Conv2D(128, 3, activation='elu', kernel_initializer='he_normal', padding='valid')(x)
-    x = layers.Conv2D(128, 3, activation='elu', kernel_initializer='he_normal', padding='valid')(x)
+    initializer = keras.initializers.VarianceScaling(
+        scale=2.0, mode='fan_in', distribution='truncated_normal')
+
+    x = layers.Conv2D(64, 5, kernel_initializer=initializer, padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
+    x = layers.Conv2D(64, 3, kernel_initializer=initializer, padding='valid')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
+    x = layers.Conv2D(128, 3, kernel_initializer=initializer, padding='valid')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
+    x = layers.Conv2D(128, 3, kernel_initializer=initializer, padding='valid')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
 
     return x
 
@@ -34,6 +51,9 @@ def conv_layer(x):
 def get_dqn(input_shape, n_outputs):
     from tensorflow import keras
     import tensorflow.keras.layers as layers
+
+    # this initialization in the last layer decreases variance in the last layer
+    initializer = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
 
     feature_maps_shape, scalar_features_shape = input_shape
     # create inputs
@@ -47,7 +67,7 @@ def get_dqn(input_shape, n_outputs):
     x = layers.Concatenate(axis=-1)([flatten_conv_output, scalar_feature_input])
     # mlp
     x = mlp_layer(x)
-    outputs = layers.Dense(n_outputs)(x)
+    outputs = layers.Dense(n_outputs, kernel_initializer=initializer)(x)
 
     model = keras.Model(inputs=[inputs], outputs=[outputs])
 

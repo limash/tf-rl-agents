@@ -26,7 +26,7 @@ def one_call(env_name, agent_name, data):
                          buffer.table_name, buffer.server_port, buffer.min_size,
                          n_steps,
                          data)
-    weights, mask, reward = agent.train(iterations_number=2000)
+    weights, mask, reward = agent.train(iterations_number=10000)
 
     data = {
         'weights': weights,
@@ -51,7 +51,7 @@ def multi_call(env_name, agent_name, data, plot=False):
                                   buffer.table_name, buffer.server_port, buffer.min_size,
                                   n_steps,
                                   data) for _ in range(parallel_calls)]
-    futures = [agent.train.remote(iterations_number=2000) for agent in agents]
+    futures = [agent.train.remote(iterations_number=10000) for agent in agents]
     outputs = ray.get(futures)
 
     rewards = np.empty(parallel_calls)
@@ -86,4 +86,4 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_data = None
 
-    multi_call(goose, 'regular', init_data)
+    one_call(goose, 'regular', init_data)
