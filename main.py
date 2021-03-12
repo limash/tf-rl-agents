@@ -1,10 +1,8 @@
-import os
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # to disable tf messages
-
 import pickle
+from pathlib import Path
 
 import ray
+import reverb
 import numpy as np
 
 from goose_agent import deep_q_learning, storage, misc
@@ -15,18 +13,30 @@ AGENTS = {"regular": deep_q_learning.RegularDQNAgent,
 BUFFERS = {"regular": storage.UniformBuffer,
            "categorical": storage.UniformBuffer}
 
+BATCH_SIZE = 32
+BUFFER_SIZE = 500000
+N_STEPS = 2  # 2 steps is a regular TD(0)
 
-def one_call(env_name, agent_name, data):
-    batch_size = 16
-    n_steps = 2
-    buffer = BUFFERS[agent_name](min_size=batch_size)
+INIT_SAMPLE_EPS = 1.  # 1 means random sampling, for sampling before training
+INIT_N_SAMPLES = 20000
+
+EPS = 1.  # start for polynomial decay eps schedule, it should be real (double)
+
+
+def one_call(env_name, agent_name, data, checkpoint):
+    if checkpoint is not None:
+        path = str(Path(checkpoint).parent)  # due to https://github.com/deepmind/reverb/issues/12
+        checkpointer = reverb.checkpointers.DefaultCheckpointer(path=path)
+    else:
+        checkpointer = None
+    buffer = BUFFERS[agent_name](min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
 
     agent_object = AGENTS[agent_name]
-    agent = agent_object(env_name,
+    agent = agent_object(env_name, INIT_N_SAMPLES,
                          buffer.table_name, buffer.server_port, buffer.min_size,
-                         n_steps,
-                         data)
-    weights, mask, reward = agent.train(iterations_number=10000)
+                         N_STEPS, INIT_SAMPLE_EPS,
+                         data, make_checkpoint=True)
+    weights, mask, reward, checkpoint = agent.train_collect(iterations_number=100000, epsilon=EPS)
 
     data = {
         'weights': weights,
@@ -35,45 +45,8 @@ def one_call(env_name, agent_name, data):
     }
     with open('data/data.pickle', 'wb') as f:
         pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
-    print("Done")
-
-
-def multi_call(env_name, agent_name, data, plot=False):
-    ray.init()
-    parallel_calls = 10
-    batch_size = 16
-    n_steps = 2
-    buffer = BUFFERS[agent_name](min_size=batch_size)
-
-    agent_object = AGENTS[agent_name]
-    agent_object = ray.remote(agent_object)
-    agents = [agent_object.remote(env_name,
-                                  buffer.table_name, buffer.server_port, buffer.min_size,
-                                  n_steps,
-                                  data) for _ in range(parallel_calls)]
-    futures = [agent.train.remote(iterations_number=10000) for agent in agents]
-    outputs = ray.get(futures)
-
-    rewards = np.empty(parallel_calls)
-    weights_list, mask_list = [], []
-    for count, (weights, mask, reward) in enumerate(outputs):
-        weights_list.append(weights)
-        mask_list.append(mask)
-        rewards[count] = reward
-        print(f"Proc #{count}: reward = {reward}")
-        if plot:
-            misc.plot_2d_array(weights[0], "Zero_lvl_with_reward_" + str(reward) + "_proc_" + str(count))
-            misc.plot_2d_array(weights[2], "First_lvl_with_reward_" + str(reward) + "_proc_" + str(count))
-    argmax = rewards.argmax()
-    data = {
-        'weights': weights_list[argmax],
-        'mask': mask_list[argmax],
-        'reward': rewards[argmax]
-    }
-    with open('data/data.pickle', 'wb') as f:
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
-
-    ray.shutdown()
+    with open('data/checkpoint', 'w') as text_file:
+        print(checkpoint, file=text_file)
     print("Done")
 
 
@@ -86,4 +59,9 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_data = None
 
-    one_call(goose, 'regular', init_data)
+    try:
+        init_checkpoint = open('data/checkpoint', 'r').read()
+    except FileNotFoundError:
+        init_checkpoint = None
+
+    one_call(goose, 'regular', init_data, init_checkpoint)

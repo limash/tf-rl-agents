@@ -10,7 +10,7 @@ from goose_agent.abstract_agent import Agent
 
 class RegularDQNAgent(Agent, ABC):
 
-    def __init__(self, env_name, *args, **kwargs):
+    def __init__(self, env_name, init_n_samples, *args, **kwargs):
         super().__init__(env_name, *args, **kwargs)
 
         # train a model from scratch
@@ -18,16 +18,16 @@ class RegularDQNAgent(Agent, ABC):
             self._model = models.get_dqn(self._input_shape, self._n_outputs)
             # collect some data with a random policy (epsilon 1 corresponds to it) before training
             # self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
-            self._collect_until_items_created(epsilon=1, n_items=self._sample_batch_size)
+            self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
         # continue a model training
         elif self._data:
             self._model = models.get_dqn(self._input_shape, self._n_outputs)
             self._model.set_weights(self._data['weights'])
             # collect date with epsilon greedy policy
-            self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
+            self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
 
         reward = self._evaluate_episodes(num_episodes=100)
-        print(f"Initial reward with a model policy is {reward}")
+        print(f"Initial reward with a model policy is {reward:.2f}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
         if np.random.rand() < epsilon:
@@ -54,12 +54,6 @@ class RegularDQNAgent(Agent, ABC):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones)
-        # foo = observations[0].numpy()
-        # foo = np.moveaxis(foo, -1, 2)
-        # foo_first = first_observations[0].numpy()
-        # foo_first = np.moveaxis(foo_first, -1, 1)
-        # foo_last = last_observations[0].numpy()
-        # foo_last = np.moveaxis(foo_last, -1, 1)
 
         next_Q_values = self._model(last_observations)
         max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)

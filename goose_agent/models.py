@@ -5,6 +5,8 @@ def mlp_layer(x):
     import tensorflow.keras.layers as layers
 
     # initializer = "he_normal"
+    # x = layers.Dense(512, kernel_initializer=initializer, activation='relu')(x)
+
     initializer = keras.initializers.VarianceScaling(
         scale=2.0, mode='fan_in', distribution='truncated_normal')
 
@@ -29,6 +31,10 @@ def conv_layer(x):
     import tensorflow.keras.layers as layers
     from tensorflow import keras
 
+    # x = layers.Conv2D(32, 8, kernel_initializer=initializer, strides=4, activation='relu')(x)
+    # x = layers.Conv2D(64, 4, kernel_initializer=initializer, strides=2, activation='relu')(x)
+    # x = layers.Conv2D(64, 3, kernel_initializer=initializer, strides=1, activation='relu')(x)
+
     initializer = keras.initializers.VarianceScaling(
         scale=2.0, mode='fan_in', distribution='truncated_normal')
 
@@ -49,6 +55,7 @@ def conv_layer(x):
 
 
 def get_dqn(input_shape, n_outputs):
+    import tensorflow as tf
     from tensorflow import keras
     import tensorflow.keras.layers as layers
 
@@ -57,14 +64,18 @@ def get_dqn(input_shape, n_outputs):
 
     feature_maps_shape, scalar_features_shape = input_shape
     # create inputs
-    feature_maps_input = layers.Input(shape=feature_maps_shape, name="feature_maps")
-    scalar_feature_input = layers.Input(shape=scalar_features_shape, name="scalar_features")
+    feature_maps_input = layers.Input(shape=feature_maps_shape, name="feature_maps", dtype=tf.uint8)
+    scalar_feature_input = layers.Input(shape=scalar_features_shape, name="scalar_features", dtype=tf.uint8)
     inputs = [feature_maps_input, scalar_feature_input]
     # feature maps
-    conv_output = conv_layer(feature_maps_input)
+    features_normalization_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
+    normalized_features = features_normalization_layer(feature_maps_input)
+    conv_output = conv_layer(normalized_features)
     flatten_conv_output = layers.Flatten()(conv_output)
     # concatenate inputs
-    x = layers.Concatenate(axis=-1)([flatten_conv_output, scalar_feature_input])
+    scalars_normalization_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32) / 200.)
+    normalized_scalars = scalars_normalization_layer(scalar_feature_input)
+    x = layers.Concatenate(axis=-1)([flatten_conv_output, normalized_scalars])
     # mlp
     x = mlp_layer(x)
     outputs = layers.Dense(n_outputs, kernel_initializer=initializer)(x)

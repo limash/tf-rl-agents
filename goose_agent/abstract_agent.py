@@ -14,8 +14,9 @@ class Agent(abc.ABC):
 
     def __init__(self, env_name,
                  buffer_table_name, buffer_server_port, buffer_min_size,
-                 n_steps=2,
-                 data=None):
+                 n_steps, init_epsilon,
+                 data=None, make_checkpoint=False,
+                 ):
         # environments; their hyperparameters
         self._train_env = gym.make(env_name)
         self._eval_env = gym.make(env_name)
@@ -30,16 +31,19 @@ class Agent(abc.ABC):
         # data contains weighs, masks, and a corresponding reward
         self._data = data
 
+        self._make_checkpoint = make_checkpoint
+
         # networks
         self._model = None
-        self._target_model = None
+        # self._target_model = None
 
         # fraction of random exp sampling
-        self._epsilon = 0.1
+        self._epsilon = init_epsilon
 
         # hyperparameters for optimization
-        self._optimizer = keras.optimizers.Adam(lr=1e-3)
-        self._loss_fn = keras.losses.mean_squared_error
+        self._optimizer = keras.optimizers.Adam(lr=1e-4)
+        # self._loss_fn = keras.losses.mean_squared_error
+        self._loss_fn = tf.keras.losses.Huber()
 
         # buffer; hyperparameters for a reward calculation
         self._table_name = buffer_table_name
@@ -53,7 +57,7 @@ class Agent(abc.ABC):
         self._dataset = storage.initialize_dataset(buffer_server_port, buffer_table_name,
                                                    self._input_shape, self._sample_batch_size, self._n_steps)
         self._iterator = iter(self._dataset)
-        self._discount_rate = tf.constant(0.95, dtype=tf.float32)
+        self._discount_rate = tf.constant(0.99, dtype=tf.float32)
         self._items_sampled = 0
 
     @tf.function
@@ -107,7 +111,7 @@ class Agent(abc.ABC):
 
         obsns = self._train_env.reset()
         action, reward, done = tf.constant(-1), tf.constant(0.), tf.constant(0.)
-        obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), obsns)
+        obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
         for i, writer in enumerate(writers):
             obs = obsns[0][i], obsns[1]
             obs_records.append(obs)
@@ -122,7 +126,7 @@ class Agent(abc.ABC):
             actions = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.int32), actions)
             rewards = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), rewards)
             dones = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), dones)
-            obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), obsns)
+            obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
             for i, writer in enumerate(writers):
                 action, reward, done = actions[i], rewards[i], dones[i]
                 obs = obsns[0][i], obsns[1]
@@ -166,20 +170,29 @@ class Agent(abc.ABC):
     def _training_step(self, actions, observations, rewards, dones, info):
         raise NotImplementedError
 
-    def train(self, iterations_number=10000):
+    def train_collect(self, iterations_number=10000, epsilon=0.1):
 
-        eval_interval = 100
-        target_model_update_interval = 100
+        eval_interval = 5000
+        # target_model_update_interval = 3000
+
+        # self._epsilon = epsilon
+        epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+            initial_learning_rate=epsilon,  # initial ε
+            decay_steps=iterations_number,
+            end_learning_rate=0.1)  # final ε
 
         weights = None
         mask = None
-        mean_episode_reward = 0
+        rewards = 0
+        eval_counter = 0
 
         for step_counter in range(1, iterations_number+1):
             # collecting
             items_created = self._replay_memory_client.server_info()[self._table_name][5].insert_stats.completed
             # do not collect new experience if we have not used previous
-            if items_created < self._items_sampled:
+            # train * X times more than collecting new experience
+            if items_created * 20 < self._items_sampled:
+                self._epsilon = epsilon_fn(step_counter)
                 self._collect_trajectories_from_episode(self._epsilon)
 
             # dm-reverb returns tensors
@@ -192,24 +205,36 @@ class Agent(abc.ABC):
             self._training_step(*experiences, info=info)
 
             if step_counter % eval_interval == 0:
+                eval_counter += 1
                 mean_episode_reward = self._evaluate_episodes()
-                print("\rTraining step: {}, reward: {}, eps: {:.3f}".format(step_counter,
-                                                                            mean_episode_reward,
-                                                                            self._epsilon))
-                print(f"Created items count: {items_created}")
-                print(f"Sampled items count: {self._items_sampled}")
+                print(f"Iteration:{step_counter:.2f}; "
+                      f"Items sampled:{self._items_sampled:.2f}; "
+                      f"Items created:{items_created:.2f}; "
+                      f"Reward: {mean_episode_reward:.2f}; "
+                      f"Epsilon: {self._epsilon:.2f}")
+                rewards += mean_episode_reward
 
             # update target model weights
-            if self._target_model and step_counter % target_model_update_interval == 0:
-                weights = self._model.get_weights()
-                self._target_model.set_weights(weights)
+            # if self._target_model and step_counter % target_model_update_interval == 0:
+            #     weights = self._model.get_weights()
+            #     self._target_model.set_weights(weights)
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
                 mean_episode_reward = self._evaluate_episodes(num_episodes=100)
                 print(f"Final reward with a model policy is {mean_episode_reward}")
+                output_reward = rewards / eval_counter
 
                 weights = self._model.get_weights()
                 mask = list(map(lambda x: np.where(np.abs(x) < 0.1, 0., 1.), weights))
 
-        return weights, mask, mean_episode_reward
+                if self._make_checkpoint:
+                    try:
+                        checkpoint = self._replay_memory_client.checkpoint()
+                    except RuntimeError as err:
+                        print(err)
+                        checkpoint = err
+                else:
+                    checkpoint = None
+
+        return weights, mask, output_reward, checkpoint

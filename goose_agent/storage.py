@@ -15,12 +15,12 @@ def initialize_dataset(server_port, table_name, observations_shape, batch_size, 
     rewards_shape = tf.TensorShape([])
     dones_shape = tf.TensorShape([])
 
-    obs_dtypes = tf.nest.map_structure(lambda x: tf.float32, observations_shape)
+    obs_dtypes = tf.nest.map_structure(lambda x: tf.uint8, observations_shape)
 
     dataset = reverb.ReplayDataset(
         server_address=f'localhost:{server_port}',
         table=table_name,
-        max_in_flight_samples_per_worker=10,
+        max_in_flight_samples_per_worker=2 * batch_size,
         dtypes=(tf.int32, obs_dtypes, tf.float32, tf.float32),
         shapes=(actions_shape, observations_shape, rewards_shape, dones_shape))
 
@@ -33,8 +33,8 @@ def initialize_dataset(server_port, table_name, observations_shape, batch_size, 
 class UniformBuffer:
     def __init__(self,
                  min_size: int = 64,
-                 max_size: int = 40000):
-
+                 max_size: int = 100000,
+                 checkpointer=None):
         self._min_size = min_size
         self._table_name = 'uniform_table'
         self._server = reverb.Server(
@@ -44,10 +44,13 @@ class UniformBuffer:
                     sampler=reverb.selectors.Uniform(),
                     remover=reverb.selectors.Fifo(),
                     max_size=int(max_size),
-                    rate_limiter=reverb.rate_limiters.MinSize(min_size)),
+                    rate_limiter=reverb.rate_limiters.MinSize(min_size),
+                ),
             ],
             # Sets the port to None to make the server pick one automatically.
-            port=None)
+            port=None,
+            checkpointer=checkpointer
+        )
 
     @property
     def table_name(self) -> str:
