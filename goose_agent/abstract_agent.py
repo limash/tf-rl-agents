@@ -35,13 +35,13 @@ class Agent(abc.ABC):
 
         # networks
         self._model = None
-        # self._target_model = None
+        self._target_model = None
 
         # fraction of random exp sampling
         self._epsilon = init_epsilon
 
         # hyperparameters for optimization
-        self._optimizer = keras.optimizers.Adam(lr=1e-4)
+        self._optimizer = keras.optimizers.Adam(lr=1e-3)
         # self._loss_fn = keras.losses.mean_squared_error
         self._loss_fn = tf.keras.losses.Huber()
 
@@ -172,8 +172,8 @@ class Agent(abc.ABC):
 
     def train_collect(self, iterations_number=10000, epsilon=0.1):
 
-        eval_interval = 5000
-        # target_model_update_interval = 3000
+        eval_interval = 2000
+        target_model_update_interval = 3000
 
         # self._epsilon = epsilon
         epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
@@ -215,13 +215,13 @@ class Agent(abc.ABC):
                 rewards += mean_episode_reward
 
             # update target model weights
-            # if self._target_model and step_counter % target_model_update_interval == 0:
-            #     weights = self._model.get_weights()
-            #     self._target_model.set_weights(weights)
+            if self._target_model and step_counter % target_model_update_interval == 0:
+                weights = self._model.get_weights()
+                self._target_model.set_weights(weights)
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                mean_episode_reward = self._evaluate_episodes(num_episodes=100)
+                mean_episode_reward = self._evaluate_episodes(num_episodes=10)
                 print(f"Final reward with a model policy is {mean_episode_reward}")
                 output_reward = rewards / eval_counter
 

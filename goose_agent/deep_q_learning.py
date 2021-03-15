@@ -7,6 +7,10 @@ import tensorflow as tf
 from goose_agent import models, misc
 from goose_agent.abstract_agent import Agent
 
+physical_devices = tf.config.list_physical_devices('GPU')
+if len(physical_devices) > 0:
+    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
 
 class RegularDQNAgent(Agent, ABC):
 
@@ -16,17 +20,17 @@ class RegularDQNAgent(Agent, ABC):
         # train a model from scratch
         if self._data is None:
             self._model = models.get_dqn(self._input_shape, self._n_outputs)
-            # collect some data with a random policy (epsilon 1 corresponds to it) before training
-            # self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
-            self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
         # continue a model training
         elif self._data:
             self._model = models.get_dqn(self._input_shape, self._n_outputs)
             self._model.set_weights(self._data['weights'])
-            # collect date with epsilon greedy policy
-            self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
 
-        reward = self._evaluate_episodes(num_episodes=100)
+        self._target_model = models.get_dqn(self._input_shape, self._n_outputs)
+        self._target_model.set_weights(self._model.get_weights())
+
+        self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
+
+        reward = self._evaluate_episodes(num_episodes=10)
         print(f"Initial reward with a model policy is {reward:.2f}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
@@ -55,7 +59,7 @@ class RegularDQNAgent(Agent, ABC):
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones)
 
-        next_Q_values = self._model(last_observations)
+        next_Q_values = self._target_model(last_observations)  # the only difference comparing to the vanilla dqn
         max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)
         target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * max_next_Q_values
         target_Q_values = tf.expand_dims(target_Q_values, -1)
@@ -70,12 +74,12 @@ class RegularDQNAgent(Agent, ABC):
 
 class CategoricalDQNAgent(Agent):
 
-    def __init__(self, env_name, *args, **kwargs):
+    def __init__(self, env_name, init_n_samples, *args, **kwargs):
         super().__init__(env_name, *args, **kwargs)
 
-        min_q_value = 0
-        max_q_value = 1000
-        self._n_atoms = 101
+        min_q_value = -10
+        max_q_value = 100
+        self._n_atoms = 111
         self._support = tf.linspace(min_q_value, max_q_value, self._n_atoms)
         self._support = tf.cast(self._support, tf.float32)
         cat_n_outputs = self._n_outputs * self._n_atoms
@@ -84,7 +88,7 @@ class CategoricalDQNAgent(Agent):
             self._model = models.get_dqn(self._input_shape, cat_n_outputs)
             # collect some data with a random policy (epsilon 1 corresponds to it) before training
             # self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
-            self._collect_until_items_created(epsilon=1, n_items=self._sample_batch_size)
+            self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
         # continue a model training
         elif self._data:
             self._model = models.get_dqn(self._input_shape, cat_n_outputs)
@@ -92,7 +96,7 @@ class CategoricalDQNAgent(Agent):
             # collect date with epsilon greedy policy
             self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
 
-        reward = self._evaluate_episodes(num_episodes=100)
+        reward = self._evaluate_episodes(num_episodes=10)
         print(f"Initial reward with a model policy is {reward}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
