@@ -36,7 +36,7 @@ def one_call(env_name, agent_name, data, checkpoint):
                          buffer.table_name, buffer.server_port, buffer.min_size,
                          N_STEPS, INIT_SAMPLE_EPS,
                          data, make_checkpoint=True)
-    weights, mask, reward, checkpoint = agent.train_collect(iterations_number=100000, epsilon=EPS)
+    weights, mask, reward, steps, checkpoint = agent.train_collect(iterations_number=100000, epsilon=EPS)
 
     data = {
         'weights': weights,
@@ -73,26 +73,29 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
     futures = [agent.train_collect.remote(iterations_number=20000, epsilon=EPS) for agent in agents]
     outputs = ray.get(futures)
 
-    rewards = np.empty(parallel_calls)
+    rewards_array = np.empty(parallel_calls)
+    steps_array = np.empty(parallel_calls)
     weights_list, mask_list = [], []
-    for count, (weights, mask, reward, _) in enumerate(outputs):
+    for count, (weights, mask, reward, steps, _) in enumerate(outputs):
         weights_list.append(weights)
         mask_list.append(mask)
-        rewards[count] = reward
-        print(f"Proc #{count}: Average reward = {reward:.2f}")
+        rewards_array[count] = reward
+        steps_array[count] = steps
+        print(f"Proc #{count}: Average reward = {reward:.2f}, Steps = {steps:.2f}")
         if plot:
             misc.plot_2d_array(weights[0], "Zero_lvl_with_reward_" + str(reward) + "_proc_" + str(count))
             misc.plot_2d_array(weights[2], "First_lvl_with_reward_" + str(reward) + "_proc_" + str(count))
-    argmax = rewards.argmax()
-    print(f"Reward to save: {rewards[argmax]:.2f}")
+    # argmax = rewards_array.argmax()
+    argmax = steps_array.argmax()
+    print(f"to save: Reward = {rewards_array[argmax]:.2f}, Steps = {steps_array[argmax]:.2f}")
     data = {
         'weights': weights_list[argmax],
         'mask': mask_list[argmax],
-        'reward': rewards[argmax]
+        'reward': rewards_array[argmax]
     }
     with open('data/data.pickle', 'wb') as f:
         pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
-    _, _, _, checkpoint = outputs[0]
+    _, _, _, _, checkpoint = outputs[0]
     with open('data/checkpoint', 'w') as text_file:
         print(checkpoint, file=text_file)
 

@@ -30,8 +30,8 @@ class RegularDQNAgent(Agent, ABC):
 
         self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
 
-        reward = self._evaluate_episodes(num_episodes=10)
-        print(f"Initial reward with a model policy is {reward:.2f}")
+        reward, steps = self._evaluate_episodes(num_episodes=10)
+        print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
         if np.random.rand() < epsilon:

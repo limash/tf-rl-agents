@@ -75,20 +75,23 @@ class Agent(abc.ABC):
         obsns = self._eval_env.reset()
         obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
-        while True:
+        for step in it.count(0):
             actions = self._epsilon_greedy_policy(obs_records, epsilon, info=None)
             obsns, rewards, dones, info = self._eval_env.step(actions)
             obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
             rewards_storage += np.asarray(rewards)
             if all(dones):
                 break
-        return rewards_storage.mean()
+        return rewards_storage.mean(), step
 
     def _evaluate_episodes(self, num_episodes=3, epsilon=0):
         episode_rewards = 0
+        steps = 0
         for _ in range(num_episodes):
-            episode_rewards += self._evaluate_episode(epsilon)
-        return episode_rewards / num_episodes
+            reward, step = self._evaluate_episode(epsilon)
+            episode_rewards += reward
+            steps += step
+        return episode_rewards / num_episodes, steps / num_episodes
 
     def _collect_trajectories_from_episode(self, epsilon):
         """
@@ -184,6 +187,7 @@ class Agent(abc.ABC):
         weights = None
         mask = None
         rewards = 0
+        steps = 0
         eval_counter = 0
 
         for step_counter in range(1, iterations_number+1):
@@ -206,13 +210,15 @@ class Agent(abc.ABC):
 
             if step_counter % eval_interval == 0:
                 eval_counter += 1
-                mean_episode_reward = self._evaluate_episodes()
+                mean_episode_reward, mean_steps = self._evaluate_episodes()
                 print(f"Iteration:{step_counter:.2f}; "
                       f"Items sampled:{self._items_sampled:.2f}; "
                       f"Items created:{items_created:.2f}; "
                       f"Reward: {mean_episode_reward:.2f}; "
+                      f"Steps: {mean_steps:.2f}; "
                       f"Epsilon: {self._epsilon:.2f}")
                 rewards += mean_episode_reward
+                steps += mean_steps
 
             # update target model weights
             if self._target_model and step_counter % target_model_update_interval == 0:
@@ -221,9 +227,13 @@ class Agent(abc.ABC):
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                mean_episode_reward = self._evaluate_episodes(num_episodes=10)
-                print(f"Final reward with a model policy is {mean_episode_reward}")
+                mean_episode_reward, mean_steps = self._evaluate_episodes(num_episodes=10)
+                print(f"Final reward with a model policy is {mean_episode_reward:.2f}; "
+                      f"Final average steps survived is {mean_steps:.2f}")
                 output_reward = rewards / eval_counter
+                output_steps = steps / eval_counter
+                print(f"Average episode reward with a model policy is {output_reward:.2f}; "
+                      f"Final average per episode steps survived is {output_steps:.2f}")
 
                 weights = self._model.get_weights()
                 mask = list(map(lambda x: np.where(np.abs(x) < 0.1, 0., 1.), weights))
@@ -237,4 +247,4 @@ class Agent(abc.ABC):
                 else:
                     checkpoint = None
 
-        return weights, mask, output_reward, checkpoint
+        return weights, mask, output_reward, output_steps, checkpoint
