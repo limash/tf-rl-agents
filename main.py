@@ -7,20 +7,19 @@ import numpy as np
 
 from goose_agent import deep_q_learning, storage, misc
 
+from config import *
+
+config = CONF_1
+
 AGENTS = {"regular": deep_q_learning.RegularDQNAgent,
           "categorical": deep_q_learning.CategoricalDQNAgent}
 
 BUFFERS = {"regular": storage.UniformBuffer,
            "categorical": storage.UniformBuffer}
 
-BATCH_SIZE = 64
-BUFFER_SIZE = 500000
-N_STEPS = 2  # 2 steps is a regular TD(0)
-
-INIT_SAMPLE_EPS = 1.  # 1 means random sampling, for sampling before training
-INIT_N_SAMPLES = 0
-
-EPS = .1  # start for polynomial decay eps schedule, it should be real (double)
+BATCH_SIZE = config["batch_size"]
+BUFFER_SIZE = config["buffer_size"]
+INIT_N_SAMPLES = config["init_n_samples"]
 
 
 def one_call(env_name, agent_name, data, checkpoint):
@@ -34,9 +33,11 @@ def one_call(env_name, agent_name, data, checkpoint):
     agent_object = AGENTS[agent_name]
     agent = agent_object(env_name, INIT_N_SAMPLES,
                          buffer.table_name, buffer.server_port, buffer.min_size,
-                         N_STEPS, INIT_SAMPLE_EPS,
+                         config,
                          data, make_checkpoint=True)
-    weights, mask, reward, steps, checkpoint = agent.train_collect(iterations_number=100000, epsilon=EPS)
+    weights, mask, reward, steps, checkpoint = agent.train_collect(iterations_number=config["iterations_number"],
+                                                                   start_epsilon=config["start_epsilon"],
+                                                                   final_epsilon=config["final_epsilon"])
 
     data = {
         'weights': weights,
@@ -68,9 +69,12 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
         make_checkpoint = True if i == 0 else False  # make a checkpoint only in the first worker
         agents.append(agent_object.remote(env_name, INIT_N_SAMPLES,
                                           buffer.table_name, buffer.server_port, buffer.min_size,
-                                          N_STEPS, INIT_SAMPLE_EPS,
+                                          config,
                                           data, make_checkpoint))
-    futures = [agent.train_collect.remote(iterations_number=20000, epsilon=EPS) for agent in agents]
+    futures = [agent.train_collect.remote(iterations_number=config["iterations_number"],
+                                          start_epsilon=config["start_epsilon"],
+                                          final_epsilon=config["final_epsilon"])
+               for agent in agents]
     outputs = ray.get(futures)
 
     rewards_array = np.empty(parallel_calls)
@@ -117,4 +121,4 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_checkpoint = None
 
-    multi_call(goose, 'regular', init_data, init_checkpoint)
+    multi_call(goose, config["agent"], init_data, init_checkpoint)

@@ -3,7 +3,7 @@ import itertools as it
 
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
+# from tensorflow import keras
 import gym
 import reverb
 
@@ -14,7 +14,7 @@ class Agent(abc.ABC):
 
     def __init__(self, env_name,
                  buffer_table_name, buffer_server_port, buffer_min_size,
-                 n_steps, init_epsilon,
+                 config,
                  data=None, make_checkpoint=False,
                  ):
         # environments; their hyperparameters
@@ -38,12 +38,14 @@ class Agent(abc.ABC):
         self._target_model = None
 
         # fraction of random exp sampling
-        self._epsilon = init_epsilon
+        self._epsilon = config["init_sample_epsilon"]
 
         # hyperparameters for optimization
-        self._optimizer = keras.optimizers.Adam(lr=1e-3)
+        # self._optimizer = keras.optimizers.Adam(lr=1.e-5)
+        self._optimizer = config["optimizer"]
         # self._loss_fn = keras.losses.mean_squared_error
-        self._loss_fn = tf.keras.losses.Huber()
+        # self._loss_fn = tf.keras.losses.Huber()
+        self._loss_fn = config["loss"]
 
         # buffer; hyperparameters for a reward calculation
         self._table_name = buffer_table_name
@@ -51,13 +53,15 @@ class Agent(abc.ABC):
         self._replay_memory_client = reverb.Client(f'localhost:{buffer_server_port}')
         # make a batch size equal of a minimal size of a buffer
         self._sample_batch_size = buffer_min_size
-        self._n_steps = n_steps  # 1. amount of steps stored per item, it should be at least 2;
+        self._n_steps = config["n_steps"]  # 1. amount of steps stored per item, it should be at least 2;
         # 2. for details see function _collect_trajectories_from_episode()
         # initialize a dataset to be used to sample data from a server
         self._dataset = storage.initialize_dataset(buffer_server_port, buffer_table_name,
                                                    self._input_shape, self._sample_batch_size, self._n_steps)
         self._iterator = iter(self._dataset)
-        self._discount_rate = tf.constant(0.99, dtype=tf.float32)
+        # self._discount_rate = tf.constant(0.99, dtype=tf.float32)
+        # self._discount_rate = tf.constant(1., dtype=tf.float32)
+        self._discount_rate = config["discount_rate"]
         self._items_sampled = 0
 
     @tf.function
@@ -173,16 +177,16 @@ class Agent(abc.ABC):
     def _training_step(self, actions, observations, rewards, dones, info):
         raise NotImplementedError
 
-    def train_collect(self, iterations_number=10000, epsilon=0.1):
+    def train_collect(self, iterations_number=10000, start_epsilon=0.1, final_epsilon=0.1):
 
         eval_interval = 2000
         target_model_update_interval = 3000
 
         # self._epsilon = epsilon
         epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
-            initial_learning_rate=epsilon,  # initial ε
+            initial_learning_rate=start_epsilon,  # initial ε
             decay_steps=iterations_number,
-            end_learning_rate=0.1)  # final ε
+            end_learning_rate=final_epsilon)  # final ε
 
         weights = None
         mask = None
