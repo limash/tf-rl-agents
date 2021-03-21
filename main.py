@@ -9,12 +9,14 @@ from goose_agent import deep_q_learning, storage, misc
 
 from config import *
 
-config = CONF_1
+config = CONF_RandomDQN
 
 AGENTS = {"regular": deep_q_learning.RegularDQNAgent,
+          "random": deep_q_learning.RandomDQNAgent,
           "categorical": deep_q_learning.CategoricalDQNAgent}
 
 BUFFERS = {"regular": storage.UniformBuffer,
+           "random": storage.UniformBuffer,
            "categorical": storage.UniformBuffer}
 
 BATCH_SIZE = config["batch_size"]
@@ -45,7 +47,7 @@ def one_call(env_name, agent_name, data, checkpoint):
         'reward': reward
     }
     with open('data/data.pickle', 'wb') as f:
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+        pickle.dump(data, f, protocol=4)
     with open('data/checkpoint', 'w') as text_file:
         print(checkpoint, file=text_file)
     print("Done")
@@ -98,7 +100,7 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
         'reward': rewards_array[argmax]
     }
     with open('data/data.pickle', 'wb') as f:
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+        pickle.dump(data, f, protocol=4)
     _, _, _, _, checkpoint = outputs[0]
     with open('data/checkpoint', 'w') as text_file:
         print(checkpoint, file=text_file)

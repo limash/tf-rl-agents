@@ -72,6 +72,35 @@ class RegularDQNAgent(Agent, ABC):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
 
+class RandomDQNAgent(RegularDQNAgent):
+
+    @tf.function
+    def _training_step(self, actions, observations, rewards, dones, info):
+
+        total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
+            self._prepare_td_arguments(actions, observations, rewards, dones)
+
+        next_Q_values = self._target_model(last_observations)
+
+        idx_random = tf.random.uniform(shape=[], maxval=4, dtype=tf.int32)
+        if idx_random == 1:
+            idx_random = tf.random.uniform(shape=[self._sample_batch_size], maxval=4, dtype=tf.int32)
+            random_next_Q_values = misc.vector_slice(next_Q_values, idx_random)
+            max_next_Q_values = random_next_Q_values
+        else:
+            max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)
+
+        target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * max_next_Q_values
+        target_Q_values = tf.expand_dims(target_Q_values, -1)
+        mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
+        with tf.GradientTape() as tape:
+            all_Q_values = self._model(first_observations)
+            Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
+            loss = tf.reduce_mean(self._loss_fn(target_Q_values, Q_values))
+        grads = tape.gradient(loss, self._model.trainable_variables)
+        self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
+
+
 class CategoricalDQNAgent(Agent):
 
     def __init__(self, env_name, init_n_samples, *args, **kwargs):
