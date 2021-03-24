@@ -54,7 +54,7 @@ def conv_layer(x):
     return x
 
 
-def get_dqn(input_shape, n_outputs):
+def get_dqn(input_shape, n_outputs, is_duel=False):
     import tensorflow as tf
     from tensorflow import keras
     import tensorflow.keras.layers as layers
@@ -78,7 +78,15 @@ def get_dqn(input_shape, n_outputs):
     x = layers.Concatenate(axis=-1)([flatten_conv_output, normalized_scalars])
     # mlp
     x = mlp_layer(x)
-    outputs = layers.Dense(n_outputs, kernel_initializer=initializer)(x)
+    # dueling
+    if is_duel:
+        state_values = layers.Dense(1, kernel_initializer=initializer)(x)
+        raw_advantages = layers.Dense(n_outputs, kernel_initializer=initializer)(x)
+        # advantages = raw_advantages - tf.reduce_max(raw_advantages, axis=1, keepdims=True)
+        advantages = raw_advantages - tf.reduce_mean(raw_advantages, axis=1, keepdims=True)
+        outputs = state_values + advantages
+    else:
+        outputs = layers.Dense(n_outputs, kernel_initializer=initializer)(x)
 
     model = keras.Model(inputs=[inputs], outputs=[outputs])
 

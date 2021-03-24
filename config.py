@@ -2,7 +2,7 @@ import tensorflow as tf
 
 
 CONF_DQN = {
-    "agent": "regular",
+    "agent": "DQN",
     "iterations_number": 100000,
     "eval_interval": 5000,
     "batch_size": 64,
@@ -19,7 +19,7 @@ CONF_DQN = {
 
 
 CONF_RandomDQN = {
-    "agent": "random",
+    "agent": "randomDQN",
     "iterations_number": 100000,
     "eval_interval": 5000,
     "batch_size": 64,
@@ -36,7 +36,7 @@ CONF_RandomDQN = {
 
 
 CONF_CategoricalDQN = {
-    "agent": "categorical",
+    "agent": "categoricalDQN",
     "iterations_number": 100000,
     "eval_interval": 5000,
     "batch_size": 64,

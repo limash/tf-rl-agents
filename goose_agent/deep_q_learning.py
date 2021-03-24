@@ -12,20 +12,20 @@ if len(physical_devices) > 0:
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
-class RegularDQNAgent(Agent, ABC):
+class DQNAgent(Agent, ABC):
 
     def __init__(self, env_name, init_n_samples, *args, **kwargs):
         super().__init__(env_name, *args, **kwargs)
 
         # train a model from scratch
         if self._data is None:
-            self._model = models.get_dqn(self._input_shape, self._n_outputs)
+            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=True)
         # continue a model training
         elif self._data:
-            self._model = models.get_dqn(self._input_shape, self._n_outputs)
+            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=True)
             self._model.set_weights(self._data['weights'])
 
-        self._target_model = models.get_dqn(self._input_shape, self._n_outputs)
+        self._target_model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=True)
         self._target_model.set_weights(self._model.get_weights())
 
         self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
@@ -59,9 +59,12 @@ class RegularDQNAgent(Agent, ABC):
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones)
 
-        next_Q_values = self._target_model(last_observations)  # the only difference comparing to the vanilla dqn
-        max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)
-        target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * max_next_Q_values
+        next_Q_values = self._model(last_observations)
+        best_next_actions = tf.argmax(next_Q_values, axis=1)
+        next_mask = tf.one_hot(best_next_actions, self._n_outputs, dtype=tf.float32)
+        next_best_Q_values = tf.reduce_sum((self._target_model(last_observations) * next_mask), axis=1)
+
+        target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * next_best_Q_values
         target_Q_values = tf.expand_dims(target_Q_values, -1)
         mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
         with tf.GradientTape() as tape:
@@ -72,7 +75,7 @@ class RegularDQNAgent(Agent, ABC):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
 
-class RandomDQNAgent(RegularDQNAgent):
+class RandomDQNAgent(DQNAgent):
 
     @tf.function
     def _training_step(self, actions, observations, rewards, dones, info):

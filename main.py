@@ -11,13 +11,13 @@ from config import *
 
 config = CONF_DQN
 
-AGENTS = {"regular": deep_q_learning.RegularDQNAgent,
-          "random": deep_q_learning.RandomDQNAgent,
-          "categorical": deep_q_learning.CategoricalDQNAgent}
+AGENTS = {"DQN": deep_q_learning.DQNAgent,
+          "randomDQN": deep_q_learning.RandomDQNAgent,
+          "categoricalDQN": deep_q_learning.CategoricalDQNAgent}
 
-BUFFERS = {"regular": storage.UniformBuffer,
-           "random": storage.UniformBuffer,
-           "categorical": storage.UniformBuffer}
+BUFFERS = {"DQN": storage.UniformBuffer,
+           "randomDQN": storage.UniformBuffer,
+           "categoricalDQN": storage.UniformBuffer}
 
 BATCH_SIZE = config["batch_size"]
 BUFFER_SIZE = config["buffer_size"]
