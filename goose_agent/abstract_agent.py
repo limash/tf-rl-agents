@@ -177,9 +177,8 @@ class Agent(abc.ABC):
     def _training_step(self, actions, observations, rewards, dones, info):
         raise NotImplementedError
 
-    def train_collect(self, iterations_number=10000, start_epsilon=0.1, final_epsilon=0.1):
+    def train_collect(self, iterations_number=20000, eval_interval=2000, start_epsilon=0.1, final_epsilon=0.1):
 
-        eval_interval = 2000
         target_model_update_interval = 3000
 
         # self._epsilon = epsilon

@@ -10,14 +10,14 @@ def mlp_layer(x):
     initializer = keras.initializers.VarianceScaling(
         scale=2.0, mode='fan_in', distribution='truncated_normal')
 
-    x = layers.Dense(500, kernel_initializer=initializer,
+    x = layers.Dense(1000, kernel_initializer=initializer,
                      kernel_regularizer=keras.regularizers.l2(0.01),
                      use_bias=False)(x)
     x = layers.BatchNormalization()(x)
     x = layers.ELU()(x)
     # x = layers.ReLU()(x)
 
-    x = layers.Dense(500, kernel_initializer=initializer,
+    x = layers.Dense(1000, kernel_initializer=initializer,
                      kernel_regularizer=keras.regularizers.l2(0.01),
                      use_bias=False)(x)
     x = layers.BatchNormalization()(x)

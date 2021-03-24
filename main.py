@@ -9,7 +9,7 @@ from goose_agent import deep_q_learning, storage, misc
 
 from config import *
 
-config = CONF_RandomDQN
+config = CONF_DQN
 
 AGENTS = {"regular": deep_q_learning.RegularDQNAgent,
           "random": deep_q_learning.RandomDQNAgent,
@@ -38,6 +38,7 @@ def one_call(env_name, agent_name, data, checkpoint):
                          config,
                          data, make_checkpoint=True)
     weights, mask, reward, steps, checkpoint = agent.train_collect(iterations_number=config["iterations_number"],
+                                                                   eval_interval=config["eval_interval"],
                                                                    start_epsilon=config["start_epsilon"],
                                                                    final_epsilon=config["final_epsilon"])
 
@@ -74,6 +75,7 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
                                           config,
                                           data, make_checkpoint))
     futures = [agent.train_collect.remote(iterations_number=config["iterations_number"],
+                                          eval_interval=config["eval_interval"],
                                           start_epsilon=config["start_epsilon"],
                                           final_epsilon=config["final_epsilon"])
                for agent in agents]

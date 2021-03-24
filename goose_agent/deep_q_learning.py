@@ -107,26 +107,24 @@ class CategoricalDQNAgent(Agent):
         super().__init__(env_name, *args, **kwargs)
 
         min_q_value = -10
-        max_q_value = 100
-        self._n_atoms = 111
+        max_q_value = 50
+        self._n_atoms = 71
         self._support = tf.linspace(min_q_value, max_q_value, self._n_atoms)
         self._support = tf.cast(self._support, tf.float32)
         cat_n_outputs = self._n_outputs * self._n_atoms
+
         # train a model from scratch
         if self._data is None:
             self._model = models.get_dqn(self._input_shape, cat_n_outputs)
-            # collect some data with a random policy (epsilon 1 corresponds to it) before training
-            # self._collect_several_episodes(epsilon=1, n_episodes=self._sample_batch_size)
-            self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
         # continue a model training
         elif self._data:
             self._model = models.get_dqn(self._input_shape, cat_n_outputs)
             self._model.set_weights(self._data['weights'])
-            # collect date with epsilon greedy policy
-            self._collect_several_episodes(epsilon=self._epsilon, n_episodes=self._sample_batch_size)
 
-        reward = self._evaluate_episodes(num_episodes=10)
-        print(f"Initial reward with a model policy is {reward}")
+        self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
+
+        reward, steps = self._evaluate_episodes(num_episodes=10)
+        print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
 
     def _epsilon_greedy_policy(self, obsns, epsilon, info):
         if np.random.rand() < epsilon:
