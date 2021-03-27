@@ -68,14 +68,14 @@ def get_dqn(input_shape, n_outputs, is_duel=False):
     scalar_feature_input = layers.Input(shape=scalar_features_shape, name="scalar_features", dtype=tf.uint8)
     inputs = [feature_maps_input, scalar_feature_input]
     # feature maps
-    features_normalization_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
-    normalized_features = features_normalization_layer(feature_maps_input)
-    conv_output = conv_layer(normalized_features)
+    features_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
+    features = features_preprocessing_layer(feature_maps_input)
+    conv_output = conv_layer(features)
     flatten_conv_output = layers.Flatten()(conv_output)
     # concatenate inputs
-    scalars_normalization_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32) / 200.)
-    normalized_scalars = scalars_normalization_layer(scalar_feature_input)
-    x = layers.Concatenate(axis=-1)([flatten_conv_output, normalized_scalars])
+    scalars_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
+    scalars = scalars_preprocessing_layer(scalar_feature_input)
+    x = layers.Concatenate(axis=-1)([flatten_conv_output, scalars])
     # mlp
     x = mlp_layer(x)
     # dueling
