@@ -30,11 +30,12 @@ def one_call(env_name, agent_name, data, checkpoint):
         checkpointer = reverb.checkpointers.DefaultCheckpointer(path=path)
     else:
         checkpointer = None
-    buffer = BUFFERS[agent_name](min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
+    buffer = BUFFERS[agent_name](num_tables=config["n_steps"]-1,
+                                 min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
 
     agent_object = AGENTS[agent_name]
     agent = agent_object(env_name, INIT_N_SAMPLES,
-                         buffer.table_name, buffer.server_port, buffer.min_size,
+                         buffer.table_names, buffer.server_port, buffer.min_size,
                          config,
                          data, make_checkpoint=True)
     weights, mask, reward, steps, checkpoint = agent.train_collect(iterations_number=config["iterations_number"],

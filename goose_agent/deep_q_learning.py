@@ -54,10 +54,10 @@ class DQNAgent(Agent, ABC):
             return best_actions
 
     @tf.function
-    def _training_step(self, actions, observations, rewards, dones, info):
+    def _training_step(self, actions, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
-            self._prepare_td_arguments(actions, observations, rewards, dones)
+            self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
         next_Q_values = self._model(last_observations)
         best_next_actions = tf.argmax(next_Q_values, axis=1)

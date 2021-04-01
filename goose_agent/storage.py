@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 import reverb
+from typing import List
 
 
 def initialize_dataset(server_port, table_name, observations_shape, batch_size, n_steps):
@@ -32,20 +33,21 @@ def initialize_dataset(server_port, table_name, observations_shape, batch_size, 
 
 class UniformBuffer:
     def __init__(self,
+                 num_tables: int = 1,
                  min_size: int = 64,
                  max_size: int = 100000,
                  checkpointer=None):
         self._min_size = min_size
-        self._table_name = 'uniform_table'
+        self._table_names = [f"uniform_table_{i}" for i in range(num_tables)]
         self._server = reverb.Server(
             tables=[
                 reverb.Table(
-                    name=self._table_name,
+                    name=self._table_names[i],
                     sampler=reverb.selectors.Uniform(),
                     remover=reverb.selectors.Fifo(),
                     max_size=int(max_size),
                     rate_limiter=reverb.rate_limiters.MinSize(min_size),
-                ),
+                ) for i in range(num_tables)
             ],
             # Sets the port to None to make the server pick one automatically.
             port=None,
@@ -53,8 +55,8 @@ class UniformBuffer:
         )
 
     @property
-    def table_name(self) -> str:
-        return self._table_name
+    def table_names(self) -> List[str]:
+        return self._table_names
 
     @property
     def min_size(self) -> int:

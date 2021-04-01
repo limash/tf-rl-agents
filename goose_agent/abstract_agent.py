@@ -13,7 +13,7 @@ from goose_agent import storage
 class Agent(abc.ABC):
 
     def __init__(self, env_name,
-                 buffer_table_name, buffer_server_port, buffer_min_size,
+                 buffer_table_names, buffer_server_port, buffer_min_size,
                  config,
                  data=None, make_checkpoint=False,
                  ):
@@ -48,7 +48,7 @@ class Agent(abc.ABC):
         self._loss_fn = config["loss"]
 
         # buffer; hyperparameters for a reward calculation
-        self._table_name = buffer_table_name
+        self._table_names = buffer_table_names
         # an object with a client, which is used to store data on a server
         self._replay_memory_client = reverb.Client(f'localhost:{buffer_server_port}')
         # make a batch size equal of a minimal size of a buffer
@@ -56,9 +56,12 @@ class Agent(abc.ABC):
         self._n_steps = config["n_steps"]  # 1. amount of steps stored per item, it should be at least 2;
         # 2. for details see function _collect_trajectories_from_episode()
         # initialize a dataset to be used to sample data from a server
-        self._dataset = storage.initialize_dataset(buffer_server_port, buffer_table_name,
-                                                   self._input_shape, self._sample_batch_size, self._n_steps)
-        self._iterator = iter(self._dataset)
+        self._datasets = [storage.initialize_dataset(buffer_server_port,
+                                                     buffer_table_names[i],
+                                                     self._input_shape,
+                                                     self._sample_batch_size,
+                                                     i + 2) for i in range(self._n_steps - 1)]
+        self._iterators = [iter(self._datasets[i]) for i in range(self._n_steps - 1)]
         # self._discount_rate = tf.constant(0.99, dtype=tf.float32)
         # self._discount_rate = tf.constant(1., dtype=tf.float32)
         self._discount_rate = config["discount_rate"]
@@ -109,7 +112,7 @@ class Agent(abc.ABC):
         this implementation creates writers for each player (goose) and stores
         n step trajectories for all of them
         """
-        start_itemizing = self._n_steps - 2
+        # start_itemizing = self._n_steps - 2
         # initialize writers
         writers = [self._replay_memory_client.writer(max_sequence_length=self._n_steps)
                    for _ in range(self._n_players)]
@@ -140,11 +143,17 @@ class Agent(abc.ABC):
                 obs_records.append(obs)
                 try:
                     writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
-                    if step >= start_itemizing:
-                        writer.create_item(table=self._table_name, num_timesteps=self._n_steps, priority=1.)
+                    # if step >= start_itemizing:
+                    for steps in range(2, self._n_steps + 1):
+                        try:
+                            writer.create_item(table=self._table_names[steps - 2], num_timesteps=steps, priority=1.)
+                        except ValueError:
+                            # stop new items creation if there are not enough buffered timesteps
+                            break
                     if done:
                         writer.close()
                 except RuntimeError:
+                    # continue writing with a next writer if a current one is closed
                     continue
             if all(dones):
                 break
@@ -155,26 +164,31 @@ class Agent(abc.ABC):
 
     def _collect_until_items_created(self, epsilon, n_items):
         # collect more exp if we do not have enough for a batch
-        items_created = self._replay_memory_client.server_info()[self._table_name][5].insert_stats.completed
+        # items are collected in several tables, where different tables save steps with different lengths
+        # for example, if n_steps = 2, there is one table
+        # if n_steps = 3, there are two tables with steps of lengths 2 and 3
+        items_created = self._replay_memory_client.server_info()[self._table_names[0]][5].insert_stats.completed * \
+                        (self._n_steps - 1)
         while items_created < n_items:
             self._collect_trajectories_from_episode(epsilon)
-            items_created = self._replay_memory_client.server_info()[self._table_name][5].insert_stats.completed
+            items_created = self._replay_memory_client.server_info()[self._table_names[0]][5].insert_stats.completed * \
+                            (self._n_steps - 1)
 
-    def _prepare_td_arguments(self, actions, observations, rewards, dones):
-        exponents = tf.expand_dims(tf.range(self._n_steps - 1, dtype=tf.float32), axis=1)
-        gammas = tf.fill([self._n_steps - 1, 1], self._discount_rate.numpy())
+    def _prepare_td_arguments(self, actions, observations, rewards, dones, steps):
+        exponents = tf.expand_dims(tf.range(steps - 1, dtype=tf.float32), axis=1)
+        gammas = tf.fill([steps - 1, 1], self._discount_rate.numpy())
         discounted_gammas = tf.pow(gammas, exponents)
 
         total_rewards = tf.squeeze(tf.matmul(rewards[:, 1:], discounted_gammas))
         first_observations = tf.nest.map_structure(lambda x: x[:, 0, ...], observations)
         last_observations = tf.nest.map_structure(lambda x: x[:, -1, ...], observations)
         last_dones = dones[:, -1]
-        last_discounted_gamma = self._discount_rate ** (self._n_steps - 1)
+        last_discounted_gamma = self._discount_rate ** (steps - 1)
         second_actions = actions[:, 1]
         return total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions
 
     @abc.abstractmethod
-    def _training_step(self, actions, observations, rewards, dones, info):
+    def _training_step(self, actions, observations, rewards, dones, steps, info):
         raise NotImplementedError
 
     def train_collect(self, iterations_number=20000, eval_interval=2000, start_epsilon=0.1, final_epsilon=0.1):
@@ -193,9 +207,10 @@ class Agent(abc.ABC):
         steps = 0
         eval_counter = 0
 
-        for step_counter in range(1, iterations_number+1):
+        for step_counter in range(1, iterations_number + 1):
             # collecting
-            items_created = self._replay_memory_client.server_info()[self._table_name][5].insert_stats.completed
+            items_created = self._replay_memory_client.server_info()[self._table_names[0]][5].insert_stats.completed * \
+                            (self._n_steps - 1)
             # do not collect new experience if we have not used previous
             # train * X times more than collecting new experience
             if items_created * 20 < self._items_sampled:
@@ -203,13 +218,13 @@ class Agent(abc.ABC):
                 self._collect_trajectories_from_episode(self._epsilon)
 
             # dm-reverb returns tensors
-            sample = next(self._iterator)
-            action, obs, reward, done = sample.data
-            key, probability, table_size, priority = sample.info
-            experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
-            self._items_sampled += self._sample_batch_size
-
-            self._training_step(*experiences, info=info)
+            samples = [next(iterator) for iterator in self._iterators]
+            for i in range(self._n_steps - 1):
+                action, obs, reward, done = samples[i].data
+                key, probability, table_size, priority = samples[i].info
+                experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
+                self._items_sampled += self._sample_batch_size
+                self._training_step(*experiences, steps=i + 2, info=info)
 
             if step_counter % eval_interval == 0:
                 eval_counter += 1
