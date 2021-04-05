@@ -9,7 +9,7 @@ from goose_agent import deep_q_learning, storage, misc
 
 from config import *
 
-config = CONF_DQN
+config = CONF_CategoricalDQN
 
 AGENTS = {"DQN": deep_q_learning.DQNAgent,
           "randomDQN": deep_q_learning.RandomDQNAgent,
@@ -64,7 +64,8 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
         checkpointer = reverb.checkpointers.DefaultCheckpointer(path=path)
     else:
         checkpointer = None
-    buffer = BUFFERS[agent_name](min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
+    buffer = BUFFERS[agent_name](num_tables=config["n_steps"]-1,
+                                 min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
 
     agent_object = AGENTS[agent_name]
     agent_object = ray.remote(num_gpus=1 / parallel_calls)(agent_object)
@@ -72,7 +73,7 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
     for i in range(parallel_calls):
         make_checkpoint = True if i == 0 else False  # make a checkpoint only in the first worker
         agents.append(agent_object.remote(env_name, INIT_N_SAMPLES,
-                                          buffer.table_name, buffer.server_port, buffer.min_size,
+                                          buffer.table_names, buffer.server_port, buffer.min_size,
                                           config,
                                           data, make_checkpoint))
     futures = [agent.train_collect.remote(iterations_number=config["iterations_number"],

@@ -183,6 +183,7 @@ class Agent(abc.ABC):
         first_observations = tf.nest.map_structure(lambda x: x[:, 0, ...], observations)
         last_observations = tf.nest.map_structure(lambda x: x[:, -1, ...], observations)
         last_dones = dones[:, -1]
+        # last_discounted_gamma = self._discount_rate ** (tf.cast(steps, tf.float32) - 1)
         last_discounted_gamma = self._discount_rate ** (steps - 1)
         second_actions = actions[:, 1]
         return total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions
@@ -190,6 +191,16 @@ class Agent(abc.ABC):
     @abc.abstractmethod
     def _training_step(self, actions, observations, rewards, dones, steps, info):
         raise NotImplementedError
+
+    @tf.function
+    def _train(self, samples_in):
+        # for i in tf.data.Dataset.range(self._n_steps - 1):
+        for i in range(self._n_steps - 1):
+            action, obs, reward, done = samples_in[i].data
+            key, probability, table_size, priority = samples_in[i].info
+            experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
+            # self._training_step(*experiences, steps=tf.constant(i + 2, tf.int32), info=info)
+            self._training_step(*experiences, steps=i + 2, info=info)
 
     def train_collect(self, iterations_number=20000, eval_interval=2000, start_epsilon=0.1, final_epsilon=0.1):
 
@@ -219,12 +230,10 @@ class Agent(abc.ABC):
 
             # dm-reverb returns tensors
             samples = [next(iterator) for iterator in self._iterators]
-            for i in range(self._n_steps - 1):
-                action, obs, reward, done = samples[i].data
-                key, probability, table_size, priority = samples[i].info
-                experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
-                self._items_sampled += self._sample_batch_size
-                self._training_step(*experiences, steps=i + 2, info=info)
+            # during training a batch of items is sampled n_steps - 1 times for all step sizes
+            # e.g. 2 steps first, then 3 steps, etc.
+            self._train(samples)
+            self._items_sampled += self._sample_batch_size * (self._n_steps - 1)
 
             if step_counter % eval_interval == 0:
                 eval_counter += 1

@@ -78,22 +78,22 @@ class DQNAgent(Agent, ABC):
 class RandomDQNAgent(DQNAgent):
 
     @tf.function
-    def _training_step(self, actions, observations, rewards, dones, info):
+    def _training_step(self, actions, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
-            self._prepare_td_arguments(actions, observations, rewards, dones)
+            self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
         next_Q_values = self._target_model(last_observations)
 
-        idx_random = tf.random.uniform(shape=[], maxval=4, dtype=tf.int32)
-        if idx_random == 1:
+        idx_random = tf.random.uniform(shape=[], maxval=10, dtype=tf.int32)
+        if idx_random == 0:
             idx_random = tf.random.uniform(shape=[self._sample_batch_size], maxval=4, dtype=tf.int32)
             random_next_Q_values = misc.vector_slice(next_Q_values, idx_random)
-            max_next_Q_values = random_next_Q_values
+            next_best_Q_values = random_next_Q_values
         else:
-            max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)
+            next_best_Q_values = tf.reduce_max(next_Q_values, axis=1)
 
-        target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * max_next_Q_values
+        target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * next_best_Q_values
         target_Q_values = tf.expand_dims(target_Q_values, -1)
         mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
         with tf.GradientTape() as tape:
@@ -109,8 +109,8 @@ class CategoricalDQNAgent(Agent):
     def __init__(self, env_name, init_n_samples, *args, **kwargs):
         super().__init__(env_name, *args, **kwargs)
 
-        min_q_value = -10
-        max_q_value = 50
+        min_q_value = -5
+        max_q_value = 20
         self._n_atoms = 71
         self._support = tf.linspace(min_q_value, max_q_value, self._n_atoms)
         self._support = tf.cast(self._support, tf.float32)
@@ -153,10 +153,10 @@ class CategoricalDQNAgent(Agent):
             return best_actions
 
     @tf.function
-    def _training_step(self, actions, observations, rewards, dones, info):
+    def _training_step(self, actions, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
-            self._prepare_td_arguments(actions, observations, rewards, dones)
+            self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
         # Part 1: calculate new target (best) Q value distributions (next_best_probs)
         next_logits = self._model(last_observations)
