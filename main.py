@@ -9,7 +9,7 @@ from goose_agent import deep_q_learning, storage, misc
 
 from config import *
 
-config = CONF_CategoricalDQN
+config = CONF_RandomDQN
 
 AGENTS = {"DQN": deep_q_learning.DQNAgent,
           "randomDQN": deep_q_learning.RandomDQNAgent,

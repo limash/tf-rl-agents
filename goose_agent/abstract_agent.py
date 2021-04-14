@@ -41,10 +41,7 @@ class Agent(abc.ABC):
         self._epsilon = config["init_sample_epsilon"]
 
         # hyperparameters for optimization
-        # self._optimizer = keras.optimizers.Adam(lr=1.e-5)
         self._optimizer = config["optimizer"]
-        # self._loss_fn = keras.losses.mean_squared_error
-        # self._loss_fn = tf.keras.losses.Huber()
         self._loss_fn = config["loss"]
 
         # buffer; hyperparameters for a reward calculation
@@ -62,8 +59,6 @@ class Agent(abc.ABC):
                                                      self._sample_batch_size,
                                                      i + 2) for i in range(self._n_steps - 1)]
         self._iterators = [iter(self._datasets[i]) for i in range(self._n_steps - 1)]
-        # self._discount_rate = tf.constant(0.99, dtype=tf.float32)
-        # self._discount_rate = tf.constant(1., dtype=tf.float32)
         self._discount_rate = config["discount_rate"]
         self._items_sampled = 0
 
@@ -183,7 +178,6 @@ class Agent(abc.ABC):
         first_observations = tf.nest.map_structure(lambda x: x[:, 0, ...], observations)
         last_observations = tf.nest.map_structure(lambda x: x[:, -1, ...], observations)
         last_dones = dones[:, -1]
-        # last_discounted_gamma = self._discount_rate ** (tf.cast(steps, tf.float32) - 1)
         last_discounted_gamma = self._discount_rate ** (steps - 1)
         second_actions = actions[:, 1]
         return total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions
@@ -194,13 +188,21 @@ class Agent(abc.ABC):
 
     @tf.function
     def _train(self, samples_in):
-        # for i in tf.data.Dataset.range(self._n_steps - 1):
         for i in range(self._n_steps - 1):
             action, obs, reward, done = samples_in[i].data
             key, probability, table_size, priority = samples_in[i].info
             experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
-            # self._training_step(*experiences, steps=tf.constant(i + 2, tf.int32), info=info)
-            self._training_step(*experiences, steps=i + 2, info=info)
+            # self._training_step(*experiences, steps=i + 2, info=info)
+            #
+            trigger = tf.random.uniform(shape=[])
+            # if i > 1 and trigger > 1 / i:
+            # if i > 0 and trigger > max(1. / (i + 1.), 0.25):
+            if i > 0 and trigger > 1. / (i + 1.):
+                pass
+            else:
+                self._training_step(*experiences, steps=i + 2, info=info)
+            # if i == 0 or i == self._n_steps - 2:
+            #     self._training_step(*experiences, steps=i + 2, info=info)
 
     def train_collect(self, iterations_number=20000, eval_interval=2000, start_epsilon=0.1, final_epsilon=0.1):
 

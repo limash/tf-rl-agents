@@ -3,6 +3,7 @@ from abc import ABC
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
 
 from goose_agent import models, misc
 from goose_agent.abstract_agent import Agent
@@ -19,13 +20,13 @@ class DQNAgent(Agent, ABC):
 
         # train a model from scratch
         if self._data is None:
-            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=True)
+            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
         # continue a model training
         elif self._data:
-            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=True)
+            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
             self._model.set_weights(self._data['weights'])
 
-        self._target_model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=True)
+        self._target_model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
         self._target_model.set_weights(self._model.get_weights())
 
         self._collect_until_items_created(epsilon=self._epsilon, n_items=init_n_samples)
@@ -53,7 +54,6 @@ class DQNAgent(Agent, ABC):
                 best_actions.append(np.argmax(Q_values[0]))
             return best_actions
 
-    @tf.function
     def _training_step(self, actions, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
@@ -77,21 +77,23 @@ class DQNAgent(Agent, ABC):
 
 class RandomDQNAgent(DQNAgent):
 
-    @tf.function
     def _training_step(self, actions, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
         next_Q_values = self._target_model(last_observations)
+        next_best_Q_values = tfp.stats.percentile(next_Q_values, q=90., interpolation='linear', axis=1)
 
-        idx_random = tf.random.uniform(shape=[], maxval=10, dtype=tf.int32)
-        if idx_random == 0:
-            idx_random = tf.random.uniform(shape=[self._sample_batch_size], maxval=4, dtype=tf.int32)
-            random_next_Q_values = misc.vector_slice(next_Q_values, idx_random)
-            next_best_Q_values = random_next_Q_values
-        else:
-            next_best_Q_values = tf.reduce_max(next_Q_values, axis=1)
+        # next_best_Q_values = tf.reduce_max(next_Q_values, axis=1)
+
+        # idx_random = tf.random.uniform(shape=[], maxval=10, dtype=tf.int32)
+        # if idx_random == 0:
+        #     idx_random = tf.random.uniform(shape=[self._sample_batch_size], maxval=4, dtype=tf.int32)
+        #     random_next_Q_values = misc.vector_slice(next_Q_values, idx_random)
+        #     next_best_Q_values = random_next_Q_values
+        # else:
+        #     next_best_Q_values = tf.reduce_max(next_Q_values, axis=1)
 
         target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * next_best_Q_values
         target_Q_values = tf.expand_dims(target_Q_values, -1)
@@ -152,7 +154,6 @@ class CategoricalDQNAgent(Agent):
                 best_actions.append(np.argmax(Q_values[0]))
             return best_actions
 
-    @tf.function
     def _training_step(self, actions, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
