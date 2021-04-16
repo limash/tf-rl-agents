@@ -4,6 +4,17 @@ import matplotlib.pyplot as plt
 import ray
 
 
+def get_non_max(x):
+    if x == 0:
+        return tf.constant([1, 2, 3], dtype=tf.int32)
+    elif x == 1:
+        return tf.constant([0, 2, 3], dtype=tf.int32)
+    elif x == 2:
+        return tf.constant([0, 1, 3], dtype=tf.int32)
+    else:
+        return tf.constant([0, 1, 2], dtype=tf.int32)
+
+
 # by Taaam, https://stackoverflow.com/questions/38492608/tensorflow-indexing-into-2d-tensor-with-1d-tensor
 def vector_slice(A, B):
     """ Returns values of rows i of A at column B[i]

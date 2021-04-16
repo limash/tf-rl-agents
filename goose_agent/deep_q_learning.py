@@ -78,7 +78,6 @@ class DQNAgent(Agent, ABC):
 class RandomDQNAgent(DQNAgent):
 
     def _training_step(self, actions, observations, rewards, dones, steps, info):
-
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
@@ -167,9 +166,53 @@ class CategoricalDQNAgent(Agent):
         next_Q_values = tf.reduce_sum(self._support * next_probabilities, axis=-1)  # Q values expected return
         # get indices of max next Q values and get corresponding distributions
         max_args = tf.cast(tf.argmax(next_Q_values, 1), tf.int32)[:, None]
+        #
+        # construct non-max indices, attempts:
+        #
+        # 1. list comprehensions: are not allowed in tf graphs
+        # foo = tf.constant([i for j in range(self._sample_batch_size) for i in range(self._n_outputs)
+        #                    if i != max_args[j]])
+        #
+        # 2. dynamic tensor: works way too slow
+        # r = tf.TensorArray(tf.int32, 0, dynamic_size=True)
+        # for i in range(self._sample_batch_size):
+        #     for j in range(self._n_outputs):
+        #         if j != max_args[i]:
+        #             r = r.write(r.size(), j)
+        # foo = r.stack()
+        # non_max_args = tf.reshape(foo, [-1, self._n_outputs - 1])
+        #
+        # 3. get a mapping from max to non max: it is probably also slow
+        # non_max_args = tf.map_fn(misc.get_non_max, max_args)
+        # first_args = non_max_args[:, 0][:, None]
+        # secnd_args = non_max_args[:, 1][:, None]
+        # third_args = non_max_args[:, 2][:, None]
+        #
+        # 4. with a mask and tf.where
+        negatives = tf.zeros(next_Q_values.shape, dtype=next_Q_values.dtype) - 100
+        max_args_mask = tf.one_hot(max_args[:, 0], self._n_outputs, on_value=True, off_value=False, dtype=tf.bool)
+        Q_values_no_max = tf.where(max_args_mask, negatives, next_Q_values)
+        first_args = tf.argmax(Q_values_no_max, axis=1, output_type=tf.int32)[:, None]
+
+        max_args_mask = tf.one_hot(first_args[:, 0], self._n_outputs, on_value=True, off_value=False, dtype=tf.bool)
+        Q_values_no_max = tf.where(max_args_mask, negatives, Q_values_no_max)
+        secnd_args = tf.argmax(Q_values_no_max, axis=1, output_type=tf.int32)[:, None]
+
+        max_args_mask = tf.one_hot(secnd_args[:, 0], self._n_outputs, on_value=True, off_value=False, dtype=tf.bool)
+        Q_values_no_max = tf.where(max_args_mask, negatives, Q_values_no_max)
+        third_args = tf.argmax(Q_values_no_max, axis=1, output_type=tf.int32)[:, None]
+
         batch_indices = tf.range(tf.cast(self._sample_batch_size, tf.int32))[:, None]
         next_qt_argmax = tf.concat([batch_indices, max_args], axis=-1)  # indices of the target Q value distributions
-        next_best_probs = tf.gather_nd(next_probabilities, next_qt_argmax)
+        next_qt_first_args = tf.concat([batch_indices, first_args], axis=-1)
+        next_qt_secnd_args = tf.concat([batch_indices, secnd_args], axis=-1)
+        next_qt_third_args = tf.concat([batch_indices, third_args], axis=-1)
+        next_best_probs = (0.7 * tf.gather_nd(next_probabilities, next_qt_argmax) +
+                           0.1 * tf.gather_nd(next_probabilities, next_qt_first_args) +
+                           0.1 * tf.gather_nd(next_probabilities, next_qt_secnd_args) +
+                           0.1 * tf.gather_nd(next_probabilities, next_qt_third_args)
+                           )
+        # next_best_probs = tf.gather_nd(next_probabilities, next_qt_argmax)
 
         # Part 2: calculate a new but non-aligned support of the target Q value distributions
         batch_support = tf.repeat(self._support[None, :], [self._sample_batch_size], axis=0)
