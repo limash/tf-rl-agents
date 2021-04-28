@@ -5,23 +5,24 @@ import ray
 import reverb
 import numpy as np
 
-from goose_agent import deep_q_learning, storage, misc
+from goose_agent import deep_q_learning, policy_gradient, storage, misc
 
 from config import *
 
-config = CONF_CategoricalDQN
+config = CONF_ActorCritic
 
 AGENTS = {"DQN": deep_q_learning.DQNAgent,
           "randomDQN": deep_q_learning.RandomDQNAgent,
-          "categoricalDQN": deep_q_learning.CategoricalDQNAgent}
+          "categoricalDQN": deep_q_learning.CategoricalDQNAgent,
+          "actor-critic": policy_gradient.ACAgent}
 
 BUFFERS = {"DQN": storage.UniformBuffer,
            "randomDQN": storage.UniformBuffer,
-           "categoricalDQN": storage.UniformBuffer}
+           "categoricalDQN": storage.UniformBuffer,
+           "actor-critic": storage.UniformBuffer}
 
 BATCH_SIZE = config["batch_size"]
 BUFFER_SIZE = config["buffer_size"]
-INIT_N_SAMPLES = config["init_n_samples"]
 
 
 def one_call(env_name, agent_name, data, checkpoint):
@@ -34,14 +35,11 @@ def one_call(env_name, agent_name, data, checkpoint):
                                  min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
 
     agent_object = AGENTS[agent_name]
-    agent = agent_object(env_name, INIT_N_SAMPLES,
-                         buffer.table_names, buffer.server_port, buffer.min_size,
-                         config,
+    agent = agent_object(env_name, config,
+                         buffer.table_names, buffer.server_port,
                          data, make_checkpoint=True)
     weights, mask, reward, steps, checkpoint = agent.train_collect(iterations_number=config["iterations_number"],
-                                                                   eval_interval=config["eval_interval"],
-                                                                   start_epsilon=config["start_epsilon"],
-                                                                   final_epsilon=config["final_epsilon"])
+                                                                   eval_interval=config["eval_interval"])
 
     data = {
         'weights': weights,
@@ -127,4 +125,4 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_checkpoint = None
 
-    multi_call(goose, config["agent"], init_data, init_checkpoint)
+    one_call(goose, config["agent"], init_data, init_checkpoint)

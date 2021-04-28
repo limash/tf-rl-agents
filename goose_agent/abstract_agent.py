@@ -3,18 +3,14 @@ import itertools as it
 
 import numpy as np
 import tensorflow as tf
-# from tensorflow import keras
 import gym
 import reverb
-
-from goose_agent import storage
 
 
 class Agent(abc.ABC):
 
-    def __init__(self, env_name,
-                 buffer_table_names, buffer_server_port, buffer_min_size,
-                 config,
+    def __init__(self, env_name, config,
+                 buffer_table_names, buffer_server_port,
                  data=None, make_checkpoint=False,
                  ):
         # environments; their hyperparameters
@@ -37,9 +33,6 @@ class Agent(abc.ABC):
         self._model = None
         self._target_model = None
 
-        # fraction of random exp sampling
-        self._epsilon = config["init_sample_epsilon"]
-
         # hyperparameters for optimization
         self._optimizer = config["optimizer"]
         self._loss_fn = config["loss"]
@@ -49,36 +42,36 @@ class Agent(abc.ABC):
         # an object with a client, which is used to store data on a server
         self._replay_memory_client = reverb.Client(f'localhost:{buffer_server_port}')
         # make a batch size equal of a minimal size of a buffer
-        self._sample_batch_size = buffer_min_size
+        self._sample_batch_size = config["batch_size"]
         self._n_steps = config["n_steps"]  # 1. amount of steps stored per item, it should be at least 2;
         # 2. for details see function _collect_trajectories_from_episode()
-        # initialize a dataset to be used to sample data from a server
-        self._datasets = [storage.initialize_dataset(buffer_server_port,
-                                                     buffer_table_names[i],
-                                                     self._input_shape,
-                                                     self._sample_batch_size,
-                                                     i + 2) for i in range(self._n_steps - 1)]
-        self._iterators = [iter(self._datasets[i]) for i in range(self._n_steps - 1)]
         self._discount_rate = config["discount_rate"]
         self._items_sampled = 0
+
+        self._start_epsilon = None
+        self._final_epsilon = None
 
     @tf.function
     def _predict(self, observation):
         return self._model(observation)
 
     @abc.abstractmethod
-    def _epsilon_greedy_policy(self, obs, epsilon, info):
+    def _policy(self, *args, **kwargs):
         raise NotImplementedError
 
-    def _evaluate_episode(self, epsilon=0):
+    def _evaluate_episode(self, epsilon):
         """
-        epsilon 0 corresponds to greedy policy
+        Epsilon 0 corresponds to greedy DQN _policy,
+        if epsilon is None assume policy gradient _policy
         """
         obsns = self._eval_env.reset()
         obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
         for step in it.count(0):
-            actions = self._epsilon_greedy_policy(obs_records, epsilon, info=None)
+            if epsilon is None:
+                actions, _ = self._policy(obs_records)
+            else:
+                actions = self._policy(obs_records, epsilon, info=None)
             obsns, rewards, dones, info = self._eval_env.step(actions)
             obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
             rewards_storage += np.asarray(rewards)
@@ -86,7 +79,7 @@ class Agent(abc.ABC):
                 break
         return rewards_storage.mean(), step
 
-    def _evaluate_episodes(self, num_episodes=3, epsilon=0):
+    def _evaluate_episodes(self, num_episodes=3, epsilon=None):
         episode_rewards = 0
         steps = 0
         for _ in range(num_episodes):
@@ -106,24 +99,36 @@ class Agent(abc.ABC):
 
         this implementation creates writers for each player (goose) and stores
         n step trajectories for all of them
+
+        if epsilon is None assume an off policy gradient method where policy_logits required
         """
-        # start_itemizing = self._n_steps - 2
-        # initialize writers
+
+        # initialize writers for all players
         writers = [self._replay_memory_client.writer(max_sequence_length=self._n_steps)
                    for _ in range(self._n_players)]
         obs_records = []
         info = None
 
+        # todo: check scalars, they are similar for all geese
         obsns = self._train_env.reset()
         action, reward, done = tf.constant(-1), tf.constant(0.), tf.constant(0.)
         obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
         for i, writer in enumerate(writers):
             obs = obsns[0][i], obsns[1]
             obs_records.append(obs)
-            writer.append((action, obs, reward, done))
+            if epsilon is None:
+                policy_logits = tf.constant([0., 0., 0., 0.])
+                writer.append((action, policy_logits, obs, reward, done))
+            else:
+                writer.append((action, obs, reward, done))
 
         for step in it.count(0):
-            actions = self._epsilon_greedy_policy(obs_records, epsilon, info)
+            if epsilon is None:
+                actions, policy_logits = self._policy(obs_records)
+                policy_logits = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32),
+                                                      policy_logits)
+            else:
+                actions = self._policy(obs_records, epsilon, info)
             obs_records = []
             # environment step receives actions and outputs observations for the dead players also
             # but it takes no effect
@@ -137,7 +142,10 @@ class Agent(abc.ABC):
                 obs = obsns[0][i], obsns[1]
                 obs_records.append(obs)
                 try:
-                    writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
+                    if epsilon is None:
+                        writer.append((action, policy_logits[i], obs, reward, done))
+                    else:
+                        writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
                     # if step >= start_itemizing:
                     for steps in range(2, self._n_steps + 1):
                         try:
@@ -153,11 +161,11 @@ class Agent(abc.ABC):
             if all(dones):
                 break
 
-    def _collect_several_episodes(self, epsilon, n_episodes):
-        for i in range(n_episodes):
-            self._collect_trajectories_from_episode(epsilon)
+    # def _collect_several_episodes(self, epsilon, n_episodes):
+    #     for i in range(n_episodes):
+    #         self._collect_trajectories_from_episode(epsilon)
 
-    def _collect_until_items_created(self, epsilon, n_items):
+    def _collect_until_items_created(self, n_items, epsilon=None):
         # collect more exp if we do not have enough for a batch
         # items are collected in several tables, where different tables save steps with different lengths
         # for example, if n_steps = 2, there is one table
@@ -183,7 +191,7 @@ class Agent(abc.ABC):
         return total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions
 
     @abc.abstractmethod
-    def _training_step(self, actions, observations, rewards, dones, steps, info):
+    def _training_step(self, *args, **kwargs):
         raise NotImplementedError
 
     @tf.function
@@ -204,15 +212,13 @@ class Agent(abc.ABC):
             # if i == 0 or i == self._n_steps - 2:
             #     self._training_step(*experiences, steps=i + 2, info=info)
 
-    def train_collect(self, iterations_number=20000, eval_interval=2000, start_epsilon=0.1, final_epsilon=0.1):
+    def train_collect(self, iterations_number=20000, eval_interval=2000):
 
         target_model_update_interval = 3000
-
-        # self._epsilon = epsilon
         epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
-            initial_learning_rate=start_epsilon,  # initial ε
+            initial_learning_rate=self._start_epsilon,
             decay_steps=iterations_number,
-            end_learning_rate=final_epsilon)  # final ε
+            end_learning_rate=self._final_epsilon) if self._start_epsilon is not None else None
 
         weights = None
         mask = None
@@ -227,25 +233,27 @@ class Agent(abc.ABC):
             # do not collect new experience if we have not used previous
             # train * X times more than collecting new experience
             if items_created * 20 < self._items_sampled:
-                self._epsilon = epsilon_fn(step_counter)
-                self._collect_trajectories_from_episode(self._epsilon)
+                epsilon = epsilon_fn(step_counter) if self._start_epsilon is not None else None
+                self._collect_trajectories_from_episode(epsilon)
 
             # dm-reverb returns tensors
             samples = [next(iterator) for iterator in self._iterators]
             # during training a batch of items is sampled n_steps - 1 times for all step sizes
             # e.g. 2 steps first, then 3 steps, etc.
+            # todo: fix, it does not take into account skipping sometimes larger steps
             self._train(samples)
             self._items_sampled += self._sample_batch_size * (self._n_steps - 1)
 
             if step_counter % eval_interval == 0:
                 eval_counter += 1
                 mean_episode_reward, mean_steps = self._evaluate_episodes()
+                epsilon = epsilon if self._start_epsilon is not None else 0
                 print(f"Iteration:{step_counter:.2f}; "
                       f"Items sampled:{self._items_sampled:.2f}; "
                       f"Items created:{items_created:.2f}; "
                       f"Reward: {mean_episode_reward:.2f}; "
                       f"Steps: {mean_steps:.2f}; "
-                      f"Epsilon: {self._epsilon:.2f}")
+                      f"Epsilon: {epsilon:.2f}")
                 rewards += mean_episode_reward
                 steps += mean_steps
 

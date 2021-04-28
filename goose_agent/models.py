@@ -54,13 +54,10 @@ def conv_layer(x):
     return x
 
 
-def get_dqn(input_shape, n_outputs, is_duel=False):
+def stem(input_shape):
     import tensorflow as tf
     from tensorflow import keras
     import tensorflow.keras.layers as layers
-
-    # this initialization in the last layer decreases variance in the last layer
-    initializer = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
 
     feature_maps_shape, scalar_features_shape = input_shape
     # create inputs
@@ -78,6 +75,18 @@ def get_dqn(input_shape, n_outputs, is_duel=False):
     x = layers.Concatenate(axis=-1)([flatten_conv_output, scalars])
     # mlp
     x = mlp_layer(x)
+
+    return inputs, x
+
+
+def get_dqn(input_shape, n_outputs, is_duel=False):
+    import tensorflow as tf
+    from tensorflow import keras
+    import tensorflow.keras.layers as layers
+
+    inputs, x = stem(input_shape)
+    # this initialization in the last layer decreases variance in the last layer
+    initializer = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
     # dueling
     if is_duel:
         state_values = layers.Dense(1, kernel_initializer=initializer)(x)
@@ -89,5 +98,21 @@ def get_dqn(input_shape, n_outputs, is_duel=False):
         outputs = layers.Dense(n_outputs, kernel_initializer=initializer)(x)
 
     model = keras.Model(inputs=[inputs], outputs=[outputs])
+
+    return model
+
+
+def get_actor_critic(input_shape, n_outputs):
+    from tensorflow import keras
+    import tensorflow.keras.layers as layers
+
+    inputs, x = stem(input_shape)
+    # this initialization in the last layer decreases variance in the last layer
+    initializer = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+
+    policy_logits = layers.Dense(n_outputs, kernel_initializer=initializer)(x)  # are not normalized logs
+    baseline = layers.Dense(1, kernel_initializer=initializer)(x)
+
+    model = keras.Model(inputs=[inputs], outputs=[policy_logits, baseline])
 
     return model

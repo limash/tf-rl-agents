@@ -31,6 +31,34 @@ def initialize_dataset(server_port, table_name, observations_shape, batch_size, 
     return dataset
 
 
+def initialize_dataset_with_logits(server_port, table_name, observations_shape, batch_size, n_steps):
+    """
+    batch_size in fact equals min size of a buffer
+    """
+    maps_shape = tf.TensorShape(observations_shape[0])
+    scalars_shape = tf.TensorShape(observations_shape[1])
+    observations_shape = (maps_shape, scalars_shape)
+
+    actions_shape = tf.TensorShape([])
+    logits_shape = tf.TensorShape([4, ])
+    rewards_shape = tf.TensorShape([])
+    dones_shape = tf.TensorShape([])
+
+    obs_dtypes = tf.nest.map_structure(lambda x: tf.uint8, observations_shape)
+
+    dataset = reverb.ReplayDataset(
+        server_address=f'localhost:{server_port}',
+        table=table_name,
+        max_in_flight_samples_per_worker=2 * batch_size,
+        dtypes=(tf.int32, tf.float32, obs_dtypes, tf.float32, tf.float32),
+        shapes=(actions_shape, logits_shape, observations_shape, rewards_shape, dones_shape))
+
+    dataset = dataset.batch(n_steps)
+    dataset = dataset.batch(batch_size)
+
+    return dataset
+
+
 class UniformBuffer:
     def __init__(self,
                  num_tables: int = 1,
