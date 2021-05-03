@@ -6,23 +6,14 @@ import reverb
 import numpy as np
 
 from goose_agent import deep_q_learning, policy_gradient, storage, misc
-
 from config import *
 
-config = CONF_ActorCritic
+config = CONF_DQN
 
 AGENTS = {"DQN": deep_q_learning.DQNAgent,
           "randomDQN": deep_q_learning.RandomDQNAgent,
           "categoricalDQN": deep_q_learning.CategoricalDQNAgent,
           "actor-critic": policy_gradient.ACAgent}
-
-BUFFERS = {"DQN": storage.UniformBuffer,
-           "randomDQN": storage.UniformBuffer,
-           "categoricalDQN": storage.UniformBuffer,
-           "actor-critic": storage.UniformBuffer}
-
-BATCH_SIZE = config["batch_size"]
-BUFFER_SIZE = config["buffer_size"]
 
 
 def one_call(env_name, agent_name, data, checkpoint):
@@ -31,8 +22,17 @@ def one_call(env_name, agent_name, data, checkpoint):
         checkpointer = reverb.checkpointers.DefaultCheckpointer(path=path)
     else:
         checkpointer = None
-    buffer = BUFFERS[agent_name](num_tables=config["n_steps"]-1,
-                                 min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
+
+    if config["buffer"] == "full_episode":
+        # 1 table for an episode
+        buffer = storage.UniformBuffer(num_tables=1,
+                                       min_size=config["batch_size"], max_size=config["buffer_size"],
+                                       checkpointer=checkpointer)
+    else:
+        # we need several tables for each step size
+        buffer = storage.UniformBuffer(num_tables=config["n_points"]-1,
+                                       min_size=config["batch_size"], max_size=config["buffer_size"],
+                                       checkpointer=checkpointer)
 
     agent_object = AGENTS[agent_name]
     agent = agent_object(env_name, config,

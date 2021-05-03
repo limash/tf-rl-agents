@@ -24,8 +24,8 @@ class ACAgent(Agent):
                                                                  buffer_table_names[i],
                                                                  self._input_shape,
                                                                  self._sample_batch_size,
-                                                                 i + 2) for i in range(self._n_steps - 1)]
-        self._iterators = [iter(self._datasets[i]) for i in range(self._n_steps - 1)]
+                                                                 i + 2) for i in range(self._n_points - 1)]
+        self._iterators = [iter(self._datasets[i]) for i in range(self._n_points - 1)]
 
         # train a model from scratch
         if not self._data:
@@ -57,7 +57,7 @@ class ACAgent(Agent):
 
     # @tf.function
     def _train(self, samples_in):
-        for i in range(self._n_steps - 1):
+        for i in range(self._n_points - 1):
             action, policy_logits, obs, reward, done = samples_in[i].data
             key, probability, table_size, priority = samples_in[i].info
             experiences, info = (action, policy_logits, obs, reward, done), (key, probability, table_size, priority)

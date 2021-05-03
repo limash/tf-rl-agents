@@ -29,12 +29,24 @@ class DQNAgent(Agent, ABC):
         self._final_epsilon = config["final_epsilon"]
 
         # initialize a dataset to be used to sample data from a server
-        self._datasets = [storage.initialize_dataset(buffer_server_port,
-                                                     buffer_table_names[i],
-                                                     self._input_shape,
-                                                     self._sample_batch_size,
-                                                     i + 2) for i in range(self._n_steps - 1)]
-        self._iterators = [iter(self._datasets[i]) for i in range(self._n_steps - 1)]
+        if config["buffer"] == "n_points":
+            datasets = [storage.initialize_dataset(buffer_server_port,
+                                                   buffer_table_names[i],
+                                                   self._input_shape,
+                                                   self._sample_batch_size,
+                                                   i + 2) for i in range(self._n_points - 1)]
+            self._iterators = [iter(datasets[i]) for i in range(self._n_points - 1)]
+        elif config["buffer"] == "full_episode":
+            dataset = storage.initialize_dataset(buffer_server_port,
+                                                 buffer_table_names[0],
+                                                 self._input_shape,
+                                                 self._sample_batch_size,
+                                                 self._n_points,
+                                                 is_episode=True)
+            self._iterators = [iter(dataset), ]
+        else:
+            print("Check buffer argument in config")
+            raise LookupError
 
         # train a model from scratch
         if self._data is None:
@@ -47,7 +59,7 @@ class DQNAgent(Agent, ABC):
         self._target_model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
         self._target_model.set_weights(self._model.get_weights())
 
-        self._collect_until_items_created(n_items=config["init_n_samples"], epsilon=self._start_epsilon)
+        self._collect_several_episodes(config["init_episodes"], epsilon=self._start_epsilon)
 
         reward, steps = self._evaluate_episodes(num_episodes=10, epsilon=0)
         print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")

@@ -18,11 +18,11 @@ class Agent(abc.ABC):
         self._eval_env = gym.make(env_name)
         self._n_outputs = self._train_env.action_space.n  # number of actions
         space = self._train_env.observation_space
-        self._n_players = len(space[0])  # number of players (geese)
+        self._n_players = len(space)  # number of players (geese)
         # env returns observations for all players, we need shape of any
-        feature_maps_shape = space[0][0].shape  # height, width, channels
-        scalar_features_shape = space[1].shape
-        self._input_shape = (feature_maps_shape, scalar_features_shape)
+        self._feature_maps_shape = space[0][0].shape  # height, width, channels
+        self._scalar_features_shape = space[0][1].shape
+        self._input_shape = (self._feature_maps_shape, self._scalar_features_shape)
 
         # data contains weighs, masks, and a corresponding reward
         self._data = data
@@ -43,13 +43,27 @@ class Agent(abc.ABC):
         self._replay_memory_client = reverb.Client(f'localhost:{buffer_server_port}')
         # make a batch size equal of a minimal size of a buffer
         self._sample_batch_size = config["batch_size"]
-        self._n_steps = config["n_steps"]  # 1. amount of steps stored per item, it should be at least 2;
-        # 2. for details see function _collect_trajectories_from_episode()
+
+        self._is_full_episode = True if config["buffer"] == "full_episode" else False
+        if self._is_full_episode:
+            # a maximum number of points in geese environment
+            self._n_points = 200
+            self._collect = self._collect_episode
+            self._items_sampled = 0
+        else:
+            self._n_points = config["n_points"]
+            if config["all_trajectories"]:
+                self._collect = self._collect_trajectories_from_episode
+            else:
+                self._collect = self._collect_some_trajectories_from_episode
+            self._items_sampled = [0 for i in range(self._n_points - 1)]
+
         self._discount_rate = config["discount_rate"]
-        self._items_sampled = 0
 
         self._start_epsilon = None
         self._final_epsilon = None
+        self._is_policy_gradient = True if self.__class__.__name__ == 'ACAgent' else False
+        self._iterators = None
 
     @tf.function
     def _predict(self, observation):
@@ -65,7 +79,7 @@ class Agent(abc.ABC):
         if epsilon is None assume policy gradient _policy
         """
         obsns = self._eval_env.reset()
-        obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
+        obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
         for step in it.count(0):
             if epsilon is None:
@@ -73,7 +87,7 @@ class Agent(abc.ABC):
             else:
                 actions = self._policy(obs_records, epsilon, info=None)
             obsns, rewards, dones, info = self._eval_env.step(actions)
-            obs_records = [(obsns[0][i], obsns[1]) for i in range(self._n_players)]
+            obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
             rewards_storage += np.asarray(rewards)
             if all(dones):
                 break
@@ -88,33 +102,215 @@ class Agent(abc.ABC):
             steps += step
         return episode_rewards / num_episodes, steps / num_episodes
 
-    def _collect_trajectories_from_episode(self, epsilon):
+    def _collect_episode(self, epsilon):
         """
-        Collects trajectories (items) to a buffer.
-        A buffer contains items, each item consists of n_steps 'time steps';
-        for a regular TD(0) update an item should have 2 time steps.
-        One 'time step' contains (action, obs, reward, done);
+        Collects an episode trajectory (1 item) to a buffer, so it consist of 200 n_points.
+
+        A buffer contains items, each item consists of several n_points;
+        for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
+        One n_point contains (action, obs, reward, done);
         action, reward, done are for the current observation (or obs);
         e.g. action led to the obs, reward prior to the obs, if is it done at the current obs.
 
         this implementation creates writers for each player (goose) and stores
-        n step trajectories for all of them
+        n_points trajectories for all of them
 
         if epsilon is None assume an off policy gradient method where policy_logits required
         """
 
         # initialize writers for all players
-        writers = [self._replay_memory_client.writer(max_sequence_length=self._n_steps)
+        # writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
+        #            for _ in range(self._n_players)]
+        writers = [[] for _ in range(self._n_players)]
+        dones = [False for _ in range(self._n_players)]  # for a first check
+        obs_records = []
+        info = None
+
+        # some constants we are going to use repeatedly
+        action_negative, reward_zero = tf.constant(-1), tf.constant(0.)
+        done_true, done_false = tf.constant(1.), tf.constant(0.)
+        policy_logits_zeros = tf.constant([0., 0., 0., 0.])
+        obs_zeros = (tf.zeros(self._feature_maps_shape, dtype=tf.uint8),
+                     tf.zeros(self._scalar_features_shape, dtype=tf.uint8))
+
+        obsns = self._train_env.reset()
+        obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
+        for i, writer in enumerate(writers):
+            obs = obsns[i][0], obsns[i][1]
+            obs_records.append(obs)
+            if epsilon is None:
+                writer.append((action_negative, policy_logits_zeros, obs, reward_zero, done_false))
+            else:
+                writer.append((action_negative, obs, reward_zero, done_false))
+
+        for _ in range(self._n_points-1):
+            if all(dones):
+                if epsilon is None:
+                    [writer.append((action_negative, policy_logits_zeros, obs_zeros, reward_zero, done_true))
+                     for writer in writers]
+                else:
+                    [writer.append((action_negative, obs_zeros, reward_zero, done_true)) for writer in writers]
+                continue
+
+            if epsilon is None:
+                actions, policy_logits = self._policy(obs_records)
+                policy_logits = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32),
+                                                      policy_logits)
+            else:
+                actions = self._policy(obs_records, epsilon, info)
+            obs_records = []
+            # environment step receives actions and outputs observations for the dead players also
+            # but it takes no effect
+            obsns, rewards, dones, info = self._train_env.step(actions)
+            actions = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.int32), actions)
+            rewards = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), rewards)
+            dones = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), dones)
+            obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
+            for i, writer in enumerate(writers):
+                action, reward, done = actions[i], rewards[i], dones[i]
+                obs = obsns[i][0], obsns[i][1]
+                obs_records.append(obs)
+                if epsilon is None:
+                    writer.append((action, policy_logits[i], obs, reward, done))
+                else:
+                    writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
+
+        for writer in writers:
+            if epsilon is None:
+                actions = tf.stack([item[0] for item in writer])
+                policy_logits = tf.stack([item[1] for item in writer])
+                obsns = [tf.stack([item[2][i] for item in writer]) for i in range(2)]
+                rewards = tf.stack([item[3] for item in writer])
+                dones = tf.stack([item[4] for item in writer])
+                episode = (actions, policy_logits, obsns, rewards, dones)
+            else:
+                actions = tf.stack([item[0] for item in writer])
+                obsns = [tf.stack([item[1][i] for item in writer]) for i in range(2)]
+                rewards = tf.stack([item[2] for item in writer])
+                dones = tf.stack([item[3] for item in writer])
+                episode = (actions, obsns, rewards, dones)
+
+            self._replay_memory_client.insert(episode, {self._table_names[0]: 1.})
+
+    def _collect_some_trajectories_from_episode(self, epsilon):
+        """
+        Collects some trajectories (items) to a buffer. For example, we have 4 points: 1, 2, 3, 4
+        the function will store 3 trajectories if the 4 point is final:
+        1, 2, 3, 4;
+        2, 3, 4;
+        3, 4;
+        For all other point it will collect 1, 2, 3, 4 trajectory only.
+
+        A buffer contains items, each item consists of several n_points;
+        for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
+        One n_point contains (action, obs, reward, done);
+        action, reward, done are for the current observation (or obs);
+        e.g. action led to the obs, reward prior to the obs, if is it done at the current obs.
+
+        this implementation creates writers for each player (goose) and stores
+        n_points trajectories for all of them
+
+        if epsilon is None assume an off policy gradient method where policy_logits required
+        """
+
+        # initialize writers for all players
+        writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
                    for _ in range(self._n_players)]
         obs_records = []
         info = None
 
-        # todo: check scalars, they are similar for all geese
         obsns = self._train_env.reset()
         action, reward, done = tf.constant(-1), tf.constant(0.), tf.constant(0.)
         obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
         for i, writer in enumerate(writers):
-            obs = obsns[0][i], obsns[1]
+            obs = obsns[i][0], obsns[i][1]
+            obs_records.append(obs)
+            if epsilon is None:
+                policy_logits = tf.constant([0., 0., 0., 0.])
+                writer.append((action, policy_logits, obs, reward, done))
+            else:
+                writer.append((action, obs, reward, done))
+
+        for step in it.count(2):  # the first initial step was sampled
+            if epsilon is None:
+                actions, policy_logits = self._policy(obs_records)
+                policy_logits = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32),
+                                                      policy_logits)
+            else:
+                actions = self._policy(obs_records, epsilon, info)
+            obs_records = []
+            # environment step receives actions and outputs observations for the dead players also
+            # but it takes no effect
+            obsns, rewards, dones, info = self._train_env.step(actions)
+            actions = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.int32), actions)
+            rewards = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), rewards)
+            dones = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), dones)
+            obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
+            for i, writer in enumerate(writers):
+                action, reward, done = actions[i], rewards[i], dones[i]
+                obs = obsns[i][0], obsns[i][1]
+                obs_records.append(obs)
+                try:
+                    if epsilon is None:
+                        writer.append((action, policy_logits[i], obs, reward, done))
+                    else:
+                        writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
+
+                    # it will add items only once after an episode finishes
+                    if step >= self._n_points:
+                        if done:
+                            for steps in range(2, self._n_points + 1):
+                                try:
+                                    writer.create_item(table=self._table_names[steps - 2],
+                                                       num_timesteps=steps, priority=1.)
+                                except ValueError:
+                                    # stop new items creation if there are not enough buffered timesteps
+                                    break
+                        else:
+                            try:
+                                writer.create_item(table=self._table_names[-1],
+                                                   num_timesteps=self._n_points, priority=1.)
+                            except ValueError:
+                                break
+                    if done:
+                        writer.close()
+                except RuntimeError:
+                    # continue writing with a next writer if a current one is closed
+                    continue
+            if all(dones):
+                break
+
+    def _collect_trajectories_from_episode(self, epsilon):
+        """
+        Collects trajectories (items) to a buffer. For example, we have 4 points to collect: 1, 2, 3, 4
+        the function will store trajectories:
+        1, 2; 2, 3; 3, 4;
+        1, 2, 3; 2, 3, 4;
+        1, 2, 3, 4;
+
+        A buffer contains items, each item consists of several n_points;
+        for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
+        One n_point contains (action, obs, reward, done);
+        action, reward, done are for the current observation (or obs);
+        e.g. action led to the obs, reward prior to the obs, if is it done at the current obs.
+
+        this implementation creates writers for each player (goose) and stores
+        n_points trajectories for all of them
+
+        if epsilon is None assume an off policy gradient method where policy_logits required
+        """
+
+        # initialize writers for all players
+        writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
+                   for _ in range(self._n_players)]
+        obs_records = []
+        info = None
+
+        obsns = self._train_env.reset()
+        action, reward, done = tf.constant(-1), tf.constant(0.), tf.constant(0.)
+        obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
+        for i, writer in enumerate(writers):
+            obs = obsns[i][0], obsns[i][1]
             obs_records.append(obs)
             if epsilon is None:
                 policy_logits = tf.constant([0., 0., 0., 0.])
@@ -139,7 +335,7 @@ class Agent(abc.ABC):
             obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
             for i, writer in enumerate(writers):
                 action, reward, done = actions[i], rewards[i], dones[i]
-                obs = obsns[0][i], obsns[1]
+                obs = obsns[i][0], obsns[i][1]
                 obs_records.append(obs)
                 try:
                     if epsilon is None:
@@ -147,7 +343,7 @@ class Agent(abc.ABC):
                     else:
                         writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
                     # if step >= start_itemizing:
-                    for steps in range(2, self._n_steps + 1):
+                    for steps in range(2, self._n_points + 1):
                         try:
                             writer.create_item(table=self._table_names[steps - 2], num_timesteps=steps, priority=1.)
                         except ValueError:
@@ -161,21 +357,16 @@ class Agent(abc.ABC):
             if all(dones):
                 break
 
-    # def _collect_several_episodes(self, epsilon, n_episodes):
-    #     for i in range(n_episodes):
-    #         self._collect_trajectories_from_episode(epsilon)
+    def _collect_several_episodes(self, n_episodes, epsilon=None):
+        for i in range(n_episodes):
+            self._collect(epsilon)
 
-    def _collect_until_items_created(self, n_items, epsilon=None):
-        # collect more exp if we do not have enough for a batch
-        # items are collected in several tables, where different tables save steps with different lengths
-        # for example, if n_steps = 2, there is one table
-        # if n_steps = 3, there are two tables with steps of lengths 2 and 3
-        items_created = self._replay_memory_client.server_info()[self._table_names[0]][5].insert_stats.completed * \
-                        (self._n_steps - 1)
-        while items_created < n_items:
-            self._collect_trajectories_from_episode(epsilon)
-            items_created = self._replay_memory_client.server_info()[self._table_names[0]][5].insert_stats.completed * \
-                            (self._n_steps - 1)
+    # def _collect_until_items_created(self, n_items, epsilon=None):
+    #     # collect more exp if we do not have enough for a batch
+    #     items_created = sum([item.current_size for item in self._replay_memory_client.server_info().values()])
+    #     while items_created < n_items:
+    #         self._collect(epsilon)
+    #         items_created = sum([item.current_size for item in self._replay_memory_client.server_info().values()])
 
     def _prepare_td_arguments(self, actions, observations, rewards, dones, steps):
         exponents = tf.expand_dims(tf.range(steps - 1, dtype=tf.float32), axis=1)
@@ -194,9 +385,9 @@ class Agent(abc.ABC):
     def _training_step(self, *args, **kwargs):
         raise NotImplementedError
 
-    @tf.function
-    def _train(self, samples_in):
-        for i in range(self._n_steps - 1):
+    # @tf.function
+    def _train_from_n_points(self, samples_in):
+        for i in range(self._n_points - 1):
             action, obs, reward, done = samples_in[i].data
             key, probability, table_size, priority = samples_in[i].info
             experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
@@ -212,6 +403,16 @@ class Agent(abc.ABC):
             # if i == 0 or i == self._n_steps - 2:
             #     self._training_step(*experiences, steps=i + 2, info=info)
 
+    def _train_n_points(self, samples_in):
+        for i, sample in enumerate(samples_in):
+            try:
+                action, obs, reward, done = sample.data
+                key, probability, table_size, priority = sample.info
+                experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
+                self._training_step(*experiences, steps=i + 2, info=info)
+            except AttributeError:
+                continue
+
     def train_collect(self, iterations_number=20000, eval_interval=2000):
 
         target_model_update_interval = 3000
@@ -225,35 +426,47 @@ class Agent(abc.ABC):
         rewards = 0
         steps = 0
         eval_counter = 0
+        # sampling_meter = 0
 
         for step_counter in range(1, iterations_number + 1):
             # collecting
-            items_created = self._replay_memory_client.server_info()[self._table_names[0]][5].insert_stats.completed * \
-                            (self._n_steps - 1)
+            items_created = [self._replay_memory_client.server_info()[table_name].current_size
+                             for table_name in self._table_names]
             # do not collect new experience if we have not used previous
             # train * X times more than collecting new experience
-            if items_created * 20 < self._items_sampled:
-                epsilon = epsilon_fn(step_counter) if self._start_epsilon is not None else None
-                self._collect_trajectories_from_episode(epsilon)
+            fraction = [x/y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
+            if fraction[-1] > 10:  # train 10 times more than items in the largest table
+                epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
+                self._collect(epsilon)
 
             # dm-reverb returns tensors
-            samples = [next(iterator) for iterator in self._iterators]
+            samples = []
+            for i, iterator in enumerate(self._iterators):
+                quota = fraction[i] / fraction[-1]
+                if quota < 5:  # train 5 times more often in small tables comparing to the largest table
+                    # if i == 1:
+                    #     print(sampling_meter)
+                    #     sampling_meter = 0
+                    samples.append(next(iterator))
+                    self._items_sampled[i] += self._sample_batch_size
+                else:
+                    # if i == 1:
+                    #     sampling_meter += 1
+                    samples.append(None)
             # during training a batch of items is sampled n_steps - 1 times for all step sizes
             # e.g. 2 steps first, then 3 steps, etc.
-            # todo: fix, it does not take into account skipping sometimes larger steps
-            self._train(samples)
-            self._items_sampled += self._sample_batch_size * (self._n_steps - 1)
+            self._train_n_points(samples)
 
             if step_counter % eval_interval == 0:
                 eval_counter += 1
-                mean_episode_reward, mean_steps = self._evaluate_episodes()
-                epsilon = epsilon if self._start_epsilon is not None else 0
+                epsilon = 0 if epsilon_fn is not None else None
+                mean_episode_reward, mean_steps = self._evaluate_episodes(epsilon=epsilon)
                 print(f"Iteration:{step_counter:.2f}; "
-                      f"Items sampled:{self._items_sampled:.2f}; "
-                      f"Items created:{items_created:.2f}; "
+                      # f"Items sampled:{self._items_sampled:.2f}; "
+                      # f"Items created:{items_created:.2f}; "
                       f"Reward: {mean_episode_reward:.2f}; "
-                      f"Steps: {mean_steps:.2f}; "
-                      f"Epsilon: {epsilon:.2f}")
+                      f"Steps: {mean_steps:.2f}")
+                      # f"Epsilon: {epsilon:.2f}")
                 rewards += mean_episode_reward
                 steps += mean_steps
 
@@ -264,7 +477,8 @@ class Agent(abc.ABC):
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                mean_episode_reward, mean_steps = self._evaluate_episodes(num_episodes=10)
+                epsilon = 0 if epsilon_fn is not None else None
+                mean_episode_reward, mean_steps = self._evaluate_episodes(num_episodes=10, epsilon=epsilon)
                 print(f"Final reward with a model policy is {mean_episode_reward:.2f}; "
                       f"Final average steps survived is {mean_steps:.2f}")
                 output_reward = rewards / eval_counter
