@@ -8,7 +8,7 @@ CONF_DQN = {
     "n_points": 5,  # 2 points is a 1 step update, 3 points is a 2 steps update, and so on
     "all_trajectories": False,
     # "buffer": "full_episode",
-    "buffer_size": 100000,
+    "buffer_size": 500000,
     "batch_size": 64,
     "init_episodes": 100,
     #

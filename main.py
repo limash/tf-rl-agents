@@ -62,22 +62,28 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
         checkpointer = reverb.checkpointers.DefaultCheckpointer(path=path)
     else:
         checkpointer = None
-    buffer = BUFFERS[agent_name](num_tables=config["n_steps"]-1,
-                                 min_size=BATCH_SIZE, max_size=BUFFER_SIZE, checkpointer=checkpointer)
+
+    if config["buffer"] == "full_episode":
+        # 1 table for an episode
+        buffer = storage.UniformBuffer(num_tables=1,
+                                       min_size=config["batch_size"], max_size=config["buffer_size"],
+                                       checkpointer=checkpointer)
+    else:
+        # we need several tables for each step size
+        buffer = storage.UniformBuffer(num_tables=config["n_points"]-1,
+                                       min_size=config["batch_size"], max_size=config["buffer_size"],
+                                       checkpointer=checkpointer)
 
     agent_object = AGENTS[agent_name]
     agent_object = ray.remote(num_gpus=1 / parallel_calls)(agent_object)
     agents = []
     for i in range(parallel_calls):
         make_checkpoint = True if i == 0 else False  # make a checkpoint only in the first worker
-        agents.append(agent_object.remote(env_name, INIT_N_SAMPLES,
-                                          buffer.table_names, buffer.server_port, buffer.min_size,
-                                          config,
+        agents.append(agent_object.remote(env_name, config,
+                                          buffer.table_names, buffer.server_port,
                                           data, make_checkpoint))
     futures = [agent.train_collect.remote(iterations_number=config["iterations_number"],
-                                          eval_interval=config["eval_interval"],
-                                          start_epsilon=config["start_epsilon"],
-                                          final_epsilon=config["final_epsilon"])
+                                          eval_interval=config["eval_interval"])
                for agent in agents]
     outputs = ray.get(futures)
 
@@ -112,7 +118,7 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
 
 
 if __name__ == '__main__':
-    goose = 'gym_goose:goose-full_control-v0'
+    goose = 'gym_goose:goose-full_control-v3'
 
     try:
         with open('data/data.pickle', 'rb') as file:
@@ -125,4 +131,4 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_checkpoint = None
 
-    one_call(goose, config["agent"], init_data, init_checkpoint)
+    multi_call(goose, config["agent"], init_data, init_checkpoint)

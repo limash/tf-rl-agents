@@ -45,7 +45,7 @@ class DQNAgent(Agent, ABC):
                                                  is_episode=True)
             self._iterators = [iter(dataset), ]
         else:
-            print("Check buffer argument in config")
+            print("Check a buffer argument in config")
             raise LookupError
 
         # train a model from scratch

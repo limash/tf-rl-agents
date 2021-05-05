@@ -143,7 +143,7 @@ class Agent(abc.ABC):
             else:
                 writer.append((action_negative, obs, reward_zero, done_false))
 
-        for _ in range(self._n_points-1):
+        for _ in range(self._n_points - 1):
             if all(dones):
                 if epsilon is None:
                     [writer.append((action_negative, policy_logits_zeros, obs_zeros, reward_zero, done_true))
@@ -194,12 +194,14 @@ class Agent(abc.ABC):
 
     def _collect_some_trajectories_from_episode(self, epsilon):
         """
-        Collects some trajectories (items) to a buffer. For example, we have 4 points: 1, 2, 3, 4
-        the function will store 3 trajectories if the 4 point is final:
+        Collects some trajectories (items) to a buffer. For example, if we have 4 points: 1, 2, 3, 4
+        the function will store 3 trajectories to 3 'dm-reverb' tables if the 4th point is terminal:
         1, 2, 3, 4;
         2, 3, 4;
         3, 4;
         For all other point it will collect 1, 2, 3, 4 trajectory only.
+        For this case there will be 3 tables, first two - small ones (for 2, 3, 4; 3, 4; type trajectories),
+        the last one will be the largest (for the 1, 2, 3, 4; type trajectories)
 
         A buffer contains items, each item consists of several n_points;
         for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
@@ -256,8 +258,8 @@ class Agent(abc.ABC):
                     else:
                         writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
 
-                    # it will add items only once after an episode finishes
                     if step >= self._n_points:
+                        # add different step items only once after an episode finishes
                         if done:
                             for steps in range(2, self._n_points + 1):
                                 try:
@@ -266,6 +268,7 @@ class Agent(abc.ABC):
                                 except ValueError:
                                     # stop new items creation if there are not enough buffered timesteps
                                     break
+                        # add the largest step item each step
                         else:
                             try:
                                 writer.create_item(table=self._table_names[-1],
@@ -287,6 +290,7 @@ class Agent(abc.ABC):
         1, 2; 2, 3; 3, 4;
         1, 2, 3; 2, 3, 4;
         1, 2, 3, 4;
+        The first table will be the largest, the second one 1 point smaller, etc.
 
         A buffer contains items, each item consists of several n_points;
         for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
@@ -403,15 +407,14 @@ class Agent(abc.ABC):
             # if i == 0 or i == self._n_steps - 2:
             #     self._training_step(*experiences, steps=i + 2, info=info)
 
+    @tf.function
     def _train_n_points(self, samples_in):
         for i, sample in enumerate(samples_in):
-            try:
+            if sample is not None:
                 action, obs, reward, done = sample.data
                 key, probability, table_size, priority = sample.info
                 experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
                 self._training_step(*experiences, steps=i + 2, info=info)
-            except AttributeError:
-                continue
 
     def train_collect(self, iterations_number=20000, eval_interval=2000):
 
@@ -434,8 +437,10 @@ class Agent(abc.ABC):
                              for table_name in self._table_names]
             # do not collect new experience if we have not used previous
             # train * X times more than collecting new experience
-            fraction = [x/y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
-            if fraction[-1] > 10:  # train 10 times more than items in the largest table
+            fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
+            # train 10 times more than items in the last table
+            # it is a table with the longest trajectories
+            if fraction[-1] > 10:
                 epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
                 self._collect(epsilon)
 
@@ -443,7 +448,8 @@ class Agent(abc.ABC):
             samples = []
             for i, iterator in enumerate(self._iterators):
                 quota = fraction[i] / fraction[-1]
-                if quota < 5:  # train 5 times more often in small tables comparing to the largest table
+                # train 5 times more often in all tables except the last one
+                if quota < 5:
                     # if i == 1:
                     #     print(sampling_meter)
                     #     sampling_meter = 0
@@ -466,7 +472,7 @@ class Agent(abc.ABC):
                       # f"Items created:{items_created:.2f}; "
                       f"Reward: {mean_episode_reward:.2f}; "
                       f"Steps: {mean_steps:.2f}")
-                      # f"Epsilon: {epsilon:.2f}")
+                # f"Epsilon: {epsilon:.2f}")
                 rewards += mean_episode_reward
                 steps += mean_steps
 
