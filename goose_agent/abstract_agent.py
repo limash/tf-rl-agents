@@ -78,16 +78,16 @@ class Agent(abc.ABC):
         Epsilon 0 corresponds to greedy DQN _policy,
         if epsilon is None assume policy gradient _policy
         """
-        obsns = self._eval_env.reset()
-        obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
+        obs_records = self._eval_env.reset()
+        # obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
         for step in it.count(0):
             if epsilon is None:
                 actions, _ = self._policy(obs_records)
             else:
                 actions = self._policy(obs_records, epsilon, info=None)
-            obsns, rewards, dones, info = self._eval_env.step(actions)
-            obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
+            obs_records, rewards, dones, info = self._eval_env.step(actions)
+            # obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
             rewards_storage += np.asarray(rewards)
             if all(dones):
                 break
@@ -411,10 +411,17 @@ class Agent(abc.ABC):
     def _train_n_points(self, samples_in):
         for i, sample in enumerate(samples_in):
             if sample is not None:
-                action, obs, reward, done = sample.data
-                key, probability, table_size, priority = sample.info
-                experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
-                self._training_step(*experiences, steps=i + 2, info=info)
+                if self._is_policy_gradient:
+                    action, policy_logits, obs, reward, done = sample.data
+                    key, probability, table_size, priority = sample.info
+                    experiences, info = (action, policy_logits, obs, reward, done), (
+                        key, probability, table_size, priority)
+                    self._training_step(*experiences, steps=i + 2, info=info)
+                else:
+                    action, obs, reward, done = sample.data
+                    key, probability, table_size, priority = sample.info
+                    experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
+                    self._training_step(*experiences, steps=i + 2, info=info)
 
     def train_collect(self, iterations_number=20000, eval_interval=2000):
 
@@ -444,7 +451,7 @@ class Agent(abc.ABC):
                 epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
                 self._collect(epsilon)
 
-            # dm-reverb returns tensors
+            # sampling
             samples = []
             for i, iterator in enumerate(self._iterators):
                 quota = fraction[i] / fraction[-1]
@@ -459,10 +466,11 @@ class Agent(abc.ABC):
                     # if i == 1:
                     #     sampling_meter += 1
                     samples.append(None)
-            # during training a batch of items is sampled n_steps - 1 times for all step sizes
-            # e.g. 2 steps first, then 3 steps, etc.
+
+            # training
             self._train_n_points(samples)
 
+            # evaluation
             if step_counter % eval_interval == 0:
                 eval_counter += 1
                 epsilon = 0 if epsilon_fn is not None else None

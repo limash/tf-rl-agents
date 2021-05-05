@@ -105,24 +105,14 @@ class DQNAgent(Agent, ABC):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
 
-class RandomDQNAgent(DQNAgent):
+class PercDQNAgent(DQNAgent):
 
     def _training_step(self, actions, observations, rewards, dones, steps, info):
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
         next_Q_values = self._target_model(last_observations)
-        next_best_Q_values = tfp.stats.percentile(next_Q_values, q=90., interpolation='linear', axis=1)
-
-        # next_best_Q_values = tf.reduce_max(next_Q_values, axis=1)
-
-        # idx_random = tf.random.uniform(shape=[], maxval=10, dtype=tf.int32)
-        # if idx_random == 0:
-        #     idx_random = tf.random.uniform(shape=[self._sample_batch_size], maxval=4, dtype=tf.int32)
-        #     random_next_Q_values = misc.vector_slice(next_Q_values, idx_random)
-        #     next_best_Q_values = random_next_Q_values
-        # else:
-        #     next_best_Q_values = tf.reduce_max(next_Q_values, axis=1)
+        next_best_Q_values = tfp.stats.percentile(next_Q_values, q=99., interpolation='linear', axis=1)
 
         target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * next_best_Q_values
         target_Q_values = tf.expand_dims(target_Q_values, -1)
@@ -135,7 +125,7 @@ class RandomDQNAgent(DQNAgent):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
 
-class CategoricalDQNAgent(Agent):
+class CategoricalDQNAgent(Agent, ABC):
 
     def __init__(self, env_name, init_n_samples, *args, **kwargs):
         super().__init__(env_name, *args, **kwargs)

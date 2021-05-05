@@ -8,10 +8,10 @@ import numpy as np
 from goose_agent import deep_q_learning, policy_gradient, storage, misc
 from config import *
 
-config = CONF_DQN
+config = CONF_PercentileDQN
 
 AGENTS = {"DQN": deep_q_learning.DQNAgent,
-          "randomDQN": deep_q_learning.RandomDQNAgent,
+          "percentileDQN": deep_q_learning.PercDQNAgent,
           "categoricalDQN": deep_q_learning.CategoricalDQNAgent,
           "actor-critic": policy_gradient.ACAgent}
 

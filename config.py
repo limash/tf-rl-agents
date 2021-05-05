@@ -22,15 +22,19 @@ CONF_DQN = {
 }
 
 
-CONF_RandomDQN = {
-    "agent": "randomDQN",
+CONF_PercentileDQN = {
+    "agent": "percentileDQN",
+    #
+    "buffer": "n_points",
+    "n_points": 5,  # 2 points is a 1 step update, 3 points is a 2 steps update, and so on
+    "all_trajectories": False,
+    # "buffer": "full_episode",
+    "buffer_size": 500000,
+    "batch_size": 64,
+    "init_episodes": 100,
+    #
     "iterations_number": 20000,
     "eval_interval": 2000,
-    "batch_size": 64,
-    "buffer_size": 1000000,
-    "n_steps": 4,  # 2 steps is a regular TD(0)
-    "init_sample_epsilon": .5,  # 1 means random sampling, for sampling before training
-    "init_n_samples": 1000,
     "start_epsilon": .5,  # start for polynomial decay eps schedule, it should be real (double)
     "final_epsilon": .1,
     "optimizer": tf.keras.optimizers.Adam(lr=1.e-5),
@@ -59,13 +63,17 @@ CONF_CategoricalDQN = {
 
 CONF_ActorCritic = {
     "agent": "actor-critic",
+    #
+    "buffer": "n_points",
+    "n_points": 5,
+    "all_trajectories": False,
+    "buffer_size": 500000,
+    "batch_size": 64,
+    "init_episodes": 100,
+    #
     "iterations_number": 20000,
     "eval_interval": 2000,
-    "batch_size": 64,
-    "buffer_size": 1000000,
-    "n_steps": 4,  # 2 steps is a regular TD(0)
-    "init_n_samples": 1000,
     "optimizer": tf.keras.optimizers.Adam(lr=1.e-5),
     "loss": None,  # it is hard-coded in the categorical algorithm
-    "discount_rate": tf.constant(.99, dtype=tf.float32)
+    "discount_rate": tf.constant(.999, dtype=tf.float32)
 }

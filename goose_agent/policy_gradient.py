@@ -20,22 +20,34 @@ class ACAgent(Agent):
                          buffer_table_names, buffer_server_port,
                          *args, **kwargs)
 
-        self._datasets = [storage.initialize_dataset_with_logits(buffer_server_port,
-                                                                 buffer_table_names[i],
-                                                                 self._input_shape,
-                                                                 self._sample_batch_size,
-                                                                 i + 2) for i in range(self._n_points - 1)]
-        self._iterators = [iter(self._datasets[i]) for i in range(self._n_points - 1)]
+        if config["buffer"] == "n_points":
+            self._datasets = [storage.initialize_dataset_with_logits(buffer_server_port,
+                                                                     buffer_table_names[i],
+                                                                     self._input_shape,
+                                                                     self._sample_batch_size,
+                                                                     i + 2) for i in range(self._n_points - 1)]
+            self._iterators = [iter(self._datasets[i]) for i in range(self._n_points - 1)]
+        elif config["buffer"] == "full_episode":
+            dataset = storage.initialize_dataset_with_logits(buffer_server_port,
+                                                             buffer_table_names[0],
+                                                             self._input_shape,
+                                                             self._sample_batch_size,
+                                                             self._n_points,
+                                                             is_episode=True)
+            self._iterators = [iter(dataset), ]
+        else:
+            print("Check a buffer argument in config")
+            raise LookupError
 
         # train a model from scratch
-        if not self._data:
+        if self._data is None:
             self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
         # continue a model training
         else:
             self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
             self._model.set_weights(self._data['weights'])
 
-        self._collect_until_items_created(n_items=config["init_n_samples"])
+        self._collect_several_episodes(config["init_episodes"])
 
         reward, steps = self._evaluate_episodes(num_episodes=10)
         print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
@@ -55,24 +67,6 @@ class ACAgent(Agent):
 
         return actions, logits
 
-    # @tf.function
-    def _train(self, samples_in):
-        for i in range(self._n_points - 1):
-            action, policy_logits, obs, reward, done = samples_in[i].data
-            key, probability, table_size, priority = samples_in[i].info
-            experiences, info = (action, policy_logits, obs, reward, done), (key, probability, table_size, priority)
-            # self._training_step(*experiences, steps=i + 2, info=info)
-            #
-            trigger = tf.random.uniform(shape=[])
-            # if i > 1 and trigger > 1 / i:
-            # if i > 0 and trigger > max(1. / (i + 1.), 0.25):
-            if i > 0 and trigger > 1. / (i + 1.):
-                pass
-            else:
-                self._training_step(*experiences, steps=i + 2, info=info)
-            # if i == 0 or i == self._n_steps - 2:
-            #     self._training_step(*experiences, steps=i + 2, info=info)
-
     def _training_step(self, actions, policy_logits, observations, rewards, dones, steps, info):
 
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
@@ -90,7 +84,7 @@ class ACAgent(Agent):
             logs = tf.math.log(masked_probs)
             Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
             td_error = tf.stop_gradient(target_Q_values - Q_values)  # to prevent updating critic part by actor
-            actor_loss = -1*logs*td_error
+            actor_loss = -1 * logs * td_error
             actor_loss = tf.reduce_mean(actor_loss)
             critic_loss = tf.reduce_mean(self._loss_fn(target_Q_values, Q_values))
             loss = actor_loss + critic_loss
