@@ -59,6 +59,9 @@ class DQNAgent(Agent, ABC):
         self._target_model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
         self._target_model.set_weights(self._model.get_weights())
 
+        if not config["debug"]:
+            self._training_step = tf.function(self._training_step)
+
         self._collect_several_episodes(config["init_episodes"], epsilon=self._start_epsilon)
 
         reward, steps = self._evaluate_episodes(num_episodes=10, epsilon=0)
@@ -85,7 +88,7 @@ class DQNAgent(Agent, ABC):
             return best_actions
 
     def _training_step(self, actions, observations, rewards, dones, steps, info):
-
+        print("Tracing")
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 
@@ -108,6 +111,7 @@ class DQNAgent(Agent, ABC):
 class PercDQNAgent(DQNAgent):
 
     def _training_step(self, actions, observations, rewards, dones, steps, info):
+        print("Tracing")
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
 

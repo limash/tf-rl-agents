@@ -3,6 +3,9 @@ import tensorflow as tf
 
 CONF_DQN = {
     "agent": "DQN",
+    "environment": "gym_goose:goose-full_control-v3",
+    "multicall": True,
+    "debug": False,
     #
     "buffer": "n_points",
     "n_points": 5,  # 2 points is a 1 step update, 3 points is a 2 steps update, and so on
@@ -24,6 +27,9 @@ CONF_DQN = {
 
 CONF_PercentileDQN = {
     "agent": "percentileDQN",
+    "environment": "gym_goose:goose-full_control-v3",
+    "multicall": True,
+    "debug": False,
     #
     "buffer": "n_points",
     "n_points": 5,  # 2 points is a 1 step update, 3 points is a 2 steps update, and so on

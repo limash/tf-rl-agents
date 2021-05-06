@@ -118,8 +118,6 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
 
 
 if __name__ == '__main__':
-    goose = 'gym_goose:goose-full_control-v3'
-
     try:
         with open('data/data.pickle', 'rb') as file:
             init_data = pickle.load(file)
@@ -131,4 +129,7 @@ if __name__ == '__main__':
     except FileNotFoundError:
         init_checkpoint = None
 
-    multi_call(goose, config["agent"], init_data, init_checkpoint)
+    if config["multicall"]:
+        multi_call(config["environment"], config["agent"], init_data, init_checkpoint)
+    else:
+        one_call(config["environment"], config["agent"], init_data, init_checkpoint)

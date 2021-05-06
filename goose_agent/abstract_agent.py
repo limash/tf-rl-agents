@@ -51,8 +51,9 @@ class Agent(abc.ABC):
             self._collect = self._collect_episode
             self._items_sampled = 0
         else:
+            self._is_all_trajectories = config["all_trajectories"]
             self._n_points = config["n_points"]
-            if config["all_trajectories"]:
+            if self._is_all_trajectories:
                 self._collect = self._collect_trajectories_from_episode
             else:
                 self._collect = self._collect_some_trajectories_from_episode
@@ -64,6 +65,7 @@ class Agent(abc.ABC):
         self._final_epsilon = None
         self._is_policy_gradient = True if self.__class__.__name__ == 'ACAgent' else False
         self._iterators = None
+        # self._sampling_meter = 0
 
     @tf.function
     def _predict(self, observation):
@@ -79,7 +81,6 @@ class Agent(abc.ABC):
         if epsilon is None assume policy gradient _policy
         """
         obs_records = self._eval_env.reset()
-        # obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
         rewards_storage = np.zeros(self._n_players)
         for step in it.count(0):
             if epsilon is None:
@@ -87,7 +88,6 @@ class Agent(abc.ABC):
             else:
                 actions = self._policy(obs_records, epsilon, info=None)
             obs_records, rewards, dones, info = self._eval_env.step(actions)
-            # obs_records = [(obsns[i][0], obsns[i][1]) for i in range(self._n_players)]
             rewards_storage += np.asarray(rewards)
             if all(dones):
                 break
@@ -200,7 +200,7 @@ class Agent(abc.ABC):
         2, 3, 4;
         3, 4;
         For all other point it will collect 1, 2, 3, 4 trajectory only.
-        For this case there will be 3 tables, first two - small ones (for 2, 3, 4; 3, 4; type trajectories),
+        For this case there will be 3 tables, first two - small ones (for 3, 4; 2, 3, 4; type trajectories),
         the last one will be the largest (for the 1, 2, 3, 4; type trajectories)
 
         A buffer contains items, each item consists of several n_points;
@@ -372,6 +372,34 @@ class Agent(abc.ABC):
     #         self._collect(epsilon)
     #         items_created = sum([item.current_size for item in self._replay_memory_client.server_info().values()])
 
+    def _sample_experience(self, fraction):
+        samples = []
+        if self._is_all_trajectories:
+            for i, iterator in enumerate(self._iterators):
+                trigger = tf.random.uniform(shape=[])
+                # sample 2 steps all the time, further steps with decreasing probability no less than 0.25
+                if i > 0 and trigger > max(1. / (i + 1.), 0.25):
+                    samples.append(None)
+                else:
+                    samples.append(next(iterator))
+        else:
+            # sampling for _collect_some_trajectories_
+            for i, iterator in enumerate(self._iterators):
+                quota = fraction[i] / fraction[-1]
+                # train 5 times more often in all tables except the last one
+                if quota < 5:
+                    # if i == 1:
+                    #     print(self._sampling_meter)
+                    #     self._sampling_meter = 0
+                    samples.append(next(iterator))
+                    self._items_sampled[i] += self._sample_batch_size
+                else:
+                    # if i == 1:
+                    #     self._sampling_meter += 1
+                    samples.append(None)
+
+        return samples
+
     def _prepare_td_arguments(self, actions, observations, rewards, dones, steps):
         exponents = tf.expand_dims(tf.range(steps - 1, dtype=tf.float32), axis=1)
         gammas = tf.fill([steps - 1, 1], self._discount_rate.numpy())
@@ -389,28 +417,13 @@ class Agent(abc.ABC):
     def _training_step(self, *args, **kwargs):
         raise NotImplementedError
 
-    # @tf.function
-    def _train_from_n_points(self, samples_in):
-        for i in range(self._n_points - 1):
-            action, obs, reward, done = samples_in[i].data
-            key, probability, table_size, priority = samples_in[i].info
-            experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
-            # self._training_step(*experiences, steps=i + 2, info=info)
-            #
-            trigger = tf.random.uniform(shape=[])
-            # if i > 1 and trigger > 1 / i:
-            # if i > 0 and trigger > max(1. / (i + 1.), 0.25):
-            if i > 0 and trigger > 1. / (i + 1.):
-                pass
-            else:
-                self._training_step(*experiences, steps=i + 2, info=info)
-            # if i == 0 or i == self._n_steps - 2:
-            #     self._training_step(*experiences, steps=i + 2, info=info)
-
-    @tf.function
-    def _train_n_points(self, samples_in):
+    def _train(self, samples_in):
         for i, sample in enumerate(samples_in):
             if sample is not None:
+                # passing i to tf function as python variable cause the same number of retraces
+                # as passing it as a tf constant
+                # i = tf.constant(i, dtype=tf.float32)
+                # also passing a tuple of tf constants does not cause retracing
                 if self._is_policy_gradient:
                     action, policy_logits, obs, reward, done = sample.data
                     key, probability, table_size, priority = sample.info
@@ -436,39 +449,23 @@ class Agent(abc.ABC):
         rewards = 0
         steps = 0
         eval_counter = 0
-        # sampling_meter = 0
 
         for step_counter in range(1, iterations_number + 1):
             # collecting
             items_created = [self._replay_memory_client.server_info()[table_name].current_size
                              for table_name in self._table_names]
             # do not collect new experience if we have not used previous
-            # train * X times more than collecting new experience
             fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
-            # train 10 times more than items in the last table
-            # it is a table with the longest trajectories
+            # sample items (and train) 10 times more than collecting items to the last table
             if fraction[-1] > 10:
                 epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
                 self._collect(epsilon)
 
             # sampling
-            samples = []
-            for i, iterator in enumerate(self._iterators):
-                quota = fraction[i] / fraction[-1]
-                # train 5 times more often in all tables except the last one
-                if quota < 5:
-                    # if i == 1:
-                    #     print(sampling_meter)
-                    #     sampling_meter = 0
-                    samples.append(next(iterator))
-                    self._items_sampled[i] += self._sample_batch_size
-                else:
-                    # if i == 1:
-                    #     sampling_meter += 1
-                    samples.append(None)
+            samples = self._sample_experience(fraction)
 
             # training
-            self._train_n_points(samples)
+            self._train(samples)
 
             # evaluation
             if step_counter % eval_interval == 0:
@@ -476,11 +473,8 @@ class Agent(abc.ABC):
                 epsilon = 0 if epsilon_fn is not None else None
                 mean_episode_reward, mean_steps = self._evaluate_episodes(epsilon=epsilon)
                 print(f"Iteration:{step_counter:.2f}; "
-                      # f"Items sampled:{self._items_sampled:.2f}; "
-                      # f"Items created:{items_created:.2f}; "
                       f"Reward: {mean_episode_reward:.2f}; "
                       f"Steps: {mean_steps:.2f}")
-                # f"Epsilon: {epsilon:.2f}")
                 rewards += mean_episode_reward
                 steps += mean_steps
 
