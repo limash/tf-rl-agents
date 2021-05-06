@@ -47,6 +47,9 @@ class ACAgent(Agent):
             self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
             self._model.set_weights(self._data['weights'])
 
+        if not config["debug"]:
+            self._training_step = tf.function(self._training_step)
+
         self._collect_several_episodes(config["init_episodes"])
 
         reward, steps = self._evaluate_episodes(num_episodes=10)
@@ -68,25 +71,26 @@ class ACAgent(Agent):
         return actions, logits
 
     def _training_step(self, actions, policy_logits, observations, rewards, dones, steps, info):
-
+        print("Tracing")
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
+        mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
 
         next_logits, baseline = self._model(last_observations)
-        max_next_Q_values = tf.reduce_max(next_Q_values, axis=1)
-        target_Q_values = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * max_next_Q_values
-        target_Q_values = tf.expand_dims(target_Q_values, -1)
-        mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
+        target_V = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * tf.squeeze(baseline)
+        target_V = tf.expand_dims(target_V, -1)
         with tf.GradientTape() as tape:
-            all_logits, all_Q_values = self._model(first_observations)
-            probs = tf.nn.softmax(all_logits)
+            logits, V_values = self._model(first_observations)
+
+            critic_loss = tf.reduce_mean(self._loss_fn(target_V, V_values))
+
+            probs = tf.nn.softmax(logits)
             masked_probs = tf.reduce_sum(probs * mask, axis=1, keepdims=True)
             logs = tf.math.log(masked_probs)
-            Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
-            td_error = tf.stop_gradient(target_Q_values - Q_values)  # to prevent updating critic part by actor
+            td_error = tf.stop_gradient(target_V - V_values)  # to prevent updating critic part by actor
             actor_loss = -1 * logs * td_error
             actor_loss = tf.reduce_mean(actor_loss)
-            critic_loss = tf.reduce_mean(self._loss_fn(target_Q_values, Q_values))
+
             loss = actor_loss + critic_loss
         grads = tape.gradient(loss, self._model.trainable_variables)
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))

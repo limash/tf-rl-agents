@@ -57,7 +57,7 @@ class Agent(abc.ABC):
                 self._collect = self._collect_trajectories_from_episode
             else:
                 self._collect = self._collect_some_trajectories_from_episode
-            self._items_sampled = [0 for i in range(self._n_points - 1)]
+            self._items_sampled = [0 for _ in range(self._n_points - 1)]
 
         self._discount_rate = config["discount_rate"]
 
@@ -322,7 +322,8 @@ class Agent(abc.ABC):
             else:
                 writer.append((action, obs, reward, done))
 
-        for step in it.count(0):
+        # for step in it.count(0):
+        while True:
             if epsilon is None:
                 actions, policy_logits = self._policy(obs_records)
                 policy_logits = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32),
