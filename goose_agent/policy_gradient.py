@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 
 from goose_agent.abstract_agent import Agent
@@ -70,24 +69,55 @@ class ACAgent(Agent):
 
         return actions, logits
 
-    def _training_step(self, actions, policy_logits, observations, rewards, dones, steps, info):
+    def _training_step(self, actions, behaviour_policy_logits, observations, rewards, dones, steps, info):
         print("Tracing")
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
-        mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
+
+        # maps = tf.transpose(observations[0], perm=[1, 0, 2, 3, 4])
+        # scalars = tf.transpose(observations[1], perm=[1, 0, 2])
+        # logits, values = tf.map_fn(self._model, (maps, scalars),
+        #                            fn_output_signature=[tf.TensorSpec((self._sample_batch_size,
+        #                                                                self._n_outputs), dtype=tf.float32),
+        #                                                 tf.TensorSpec((self._sample_batch_size, 1),
+        #                                                               dtype=tf.float32)])
+        # actions = tf.transpose(actions)
+        # target_action_log_probs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits,
+        #                                                                           labels=actions)
+        # behaviour_policy_logits = tf.transpose(behaviour_policy_logits, perm=[1, 0, 2])
+        # behaviour_action_log_probs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=behaviour_policy_logits,
+        #                                                                              labels=actions)
+        # log_rhos = target_action_log_probs - behaviour_action_log_probs
+        # rhos = tf.exp(log_rhos)
+        # clipped_rhos = tf.minimum(tf.constant(1.), rhos)
 
         next_logits, baseline = self._model(last_observations)
+        # baseline = values[-1]  # V values from the last observation
         target_V = total_rewards + (tf.constant(1.0) - last_dones) * last_discounted_gamma * tf.squeeze(baseline)
+        # target_V = clipped_rhos * target_V
         target_V = tf.expand_dims(target_V, -1)
         with tf.GradientTape() as tape:
             logits, V_values = self._model(first_observations)
 
             critic_loss = tf.reduce_mean(self._loss_fn(target_V, V_values))
 
-            probs = tf.nn.softmax(logits)
-            masked_probs = tf.reduce_sum(probs * mask, axis=1, keepdims=True)
-            logs = tf.math.log(masked_probs)
-            td_error = tf.stop_gradient(target_V - V_values)  # to prevent updating critic part by actor
+            # probs = tf.nn.softmax(logits)
+            # mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
+            # masked_probs = tf.reduce_sum(probs * mask, axis=1, keepdims=True)
+            # logs = tf.math.log(masked_probs)
+            # below is similar to above 4 lines
+            logs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits,
+                                                                   labels=second_actions)
+            # second logits correspond to second actions
+            behaviour_logs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=behaviour_policy_logits[:, 1, :],
+                                                                             labels=second_actions)
+            log_rhos = logs - behaviour_logs
+            rhos = tf.exp(log_rhos)
+            clipped_rhos = tf.minimum(tf.constant(1.), rhos)
+            logs = tf.expand_dims(logs, -1)
+            clipped_rhos = tf.expand_dims(clipped_rhos, -1)
+            # to check: logs in actor loss should not be under stop_gradient, is it a case currently?
+            td_error = tf.stop_gradient(clipped_rhos * (target_V - V_values))  # prevents updating critic part by actor
             actor_loss = -1 * logs * td_error
             actor_loss = tf.reduce_mean(actor_loss)
 
