@@ -103,7 +103,7 @@ class DQNAgent(Agent, ABC):
         with tf.GradientTape() as tape:
             all_Q_values = self._model(first_observations)
             Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
-            loss = tf.reduce_mean(self._loss_fn(target_Q_values, Q_values))
+            loss = tf.reduce_mean(self._loss_fn(target_Q_values, Q_values))  # todo: reduce_mean is redundant
         grads = tape.gradient(loss, self._model.trainable_variables)
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 

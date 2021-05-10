@@ -15,6 +15,18 @@ def get_non_max(x):
         return tf.constant([0, 1, 2], dtype=tf.int32)
 
 
+def entropy_loss(logits):
+    # another way to calculate entropy:
+    # probs = tf.nn.softmax(logits)
+    # entropy = tf.keras.losses.categorical_crossentropy(probs, probs)
+    probs = tf.nn.softmax(logits)
+    log_probs = tf.nn.log_softmax(logits)
+    entropy = tf.reduce_sum(-probs * log_probs, axis=-1)
+    result = -tf.reduce_mean(entropy)
+    # result = -tf.reduce_sum(entropy)
+    return result
+
+
 # by Taaam, https://stackoverflow.com/questions/38492608/tensorflow-indexing-into-2d-tensor-with-1d-tensor
 def vector_slice(A, B):
     """ Returns values of rows i of A at column B[i]

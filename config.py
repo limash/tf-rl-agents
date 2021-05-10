@@ -92,5 +92,6 @@ CONF_ActorCritic = {
     "eval_interval": 2000,
     "optimizer": tf.keras.optimizers.Adam(lr=1.e-5),
     "loss": tf.keras.losses.Huber(),
+    # "loss": tf.keras.losses.MeanSquaredError(),
     "discount_rate": tf.constant(.999, dtype=tf.float32)
 }

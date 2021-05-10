@@ -3,7 +3,7 @@ import tensorflow as tf
 from goose_agent.abstract_agent import Agent
 from goose_agent import models
 
-from goose_agent import storage
+from goose_agent import storage, misc
 
 physical_devices = tf.config.list_physical_devices('GPU')
 if len(physical_devices) > 0:
@@ -18,6 +18,8 @@ class ACAgent(Agent):
         super().__init__(env_name, config,
                          buffer_table_names, buffer_server_port,
                          *args, **kwargs)
+
+        self._entropy_c = tf.constant(2.5e-4)
 
         if config["buffer"] == "n_points":
             self._datasets = [storage.initialize_dataset_with_logits(buffer_server_port,
@@ -99,28 +101,39 @@ class ACAgent(Agent):
         with tf.GradientTape() as tape:
             logits, V_values = self._model(first_observations)
 
-            critic_loss = tf.reduce_mean(self._loss_fn(target_V, V_values))
+            # critic loss
+            critic_loss = self._loss_fn(target_V, V_values)
+            # critic_loss_sum = .5 * tf.reduce_sum(tf.square(target_V - V_values))
 
+            # actor loss
             # probs = tf.nn.softmax(logits)
             # mask = tf.one_hot(second_actions, self._n_outputs, dtype=tf.float32)
             # masked_probs = tf.reduce_sum(probs * mask, axis=1, keepdims=True)
             # logs = tf.math.log(masked_probs)
-            # below is similar to above 4 lines
+            # below is similar to above 4 lines, returns log probs from logits masked by actions
             logs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits,
                                                                    labels=second_actions)
-            # second logits correspond to second actions
-            behaviour_logs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=behaviour_policy_logits[:, 1, :],
-                                                                             labels=second_actions)
-            log_rhos = logs - behaviour_logs
-            rhos = tf.exp(log_rhos)
-            clipped_rhos = tf.minimum(tf.constant(1.), rhos)
+            # td error with truncated IS weights (rhos), it is a constant:
+            with tape.stop_recording():
+                # second logits correspond to second actions
+                behaviour_logs = -tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    logits=behaviour_policy_logits[:, 1, :],
+                    labels=second_actions
+                )
+                log_rhos = logs - behaviour_logs
+                rhos = tf.exp(log_rhos)
+                clipped_rhos = tf.minimum(tf.constant(1.), rhos)
+                clipped_rhos = tf.expand_dims(clipped_rhos, -1)
+                td_error = clipped_rhos * (target_V - V_values)
+
             logs = tf.expand_dims(logs, -1)
-            clipped_rhos = tf.expand_dims(clipped_rhos, -1)
-            # to check: logs in actor loss should not be under stop_gradient, is it a case currently?
-            td_error = tf.stop_gradient(clipped_rhos * (target_V - V_values))  # prevents updating critic part by actor
             actor_loss = -1 * logs * td_error
             actor_loss = tf.reduce_mean(actor_loss)
+            # actor_loss = tf.reduce_sum(actor_loss)
 
-            loss = actor_loss + critic_loss
+            # entropy loss
+            entropy_loss = self._entropy_c * misc.entropy_loss(logits)
+
+            loss = actor_loss + critic_loss + entropy_loss
         grads = tape.gradient(loss, self._model.trainable_variables)
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
