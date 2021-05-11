@@ -5,10 +5,10 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from goose_agent import models, misc
-from goose_agent.abstract_agent import Agent
+from tf_reinforcement_agents import models, misc
+from tf_reinforcement_agents.abstract_agent import Agent
 
-from goose_agent import storage
+from tf_reinforcement_agents import storage
 
 physical_devices = tf.config.list_physical_devices('GPU')
 if len(physical_devices) > 0:

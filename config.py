@@ -78,8 +78,8 @@ CONF_CategoricalDQN = {
 CONF_ActorCritic = {
     "agent": "actor-critic",
     "environment": "gym_goose:goose-full_control-v3",
-    "multicall": False,
-    "debug": True,
+    "multicall": True,
+    "debug": False,
     #
     "buffer": "n_points",
     "n_points": 5,
@@ -88,8 +88,8 @@ CONF_ActorCritic = {
     "batch_size": 64,
     "init_episodes": 100,
     #
-    "iterations_number": 20000,
-    "eval_interval": 2000,
+    "iterations_number": 50000,
+    "eval_interval": 5000,
     "optimizer": tf.keras.optimizers.Adam(lr=1.e-5),
     "loss": tf.keras.losses.Huber(),
     # "loss": tf.keras.losses.MeanSquaredError(),

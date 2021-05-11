@@ -1,9 +1,9 @@
 import tensorflow as tf
 
-from goose_agent.abstract_agent import Agent
-from goose_agent import models
+from tf_reinforcement_agents.abstract_agent import Agent
+from tf_reinforcement_agents import models
 
-from goose_agent import storage, misc
+from tf_reinforcement_agents import storage, misc
 
 physical_devices = tf.config.list_physical_devices('GPU')
 if len(physical_devices) > 0:

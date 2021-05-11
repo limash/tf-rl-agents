@@ -5,7 +5,7 @@ import ray
 import reverb
 import numpy as np
 
-from goose_agent import deep_q_learning, policy_gradient, storage, misc
+from tf_reinforcement_agents import deep_q_learning, policy_gradient, storage, misc
 from config import *
 
 config = CONF_ActorCritic
