@@ -54,6 +54,59 @@ def conv_layer(x):
     return x
 
 
+def circular_padding(x):
+    import tensorflow as tf
+
+    x = tf.concat([x[:, -1:, :, :], x, x[:, :1, :, :]], 1)
+    x = tf.concat([x[:, :, -1:, :], x, x[:, :, :1, :]], 2)
+    return x
+
+
+def simplified_residual_unit(filters_in):
+    from tensorflow import keras
+
+    initializer = keras.initializers.VarianceScaling(
+        scale=2.0, mode='fan_in', distribution='truncated_normal')
+
+    class ResidualUnit(keras.layers.Layer):
+        def __init__(self, filters, activation="relu", **kwargs):
+            super().__init__(**kwargs)
+
+            self.activation = keras.activations.get(activation)
+            self.main_layers = [
+                keras.layers.Lambda(circular_padding),
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.BatchNormalization()
+            ]
+
+        def call(self, inputs, **kwargs):
+            Z = inputs
+            for layer in self.main_layers:
+                Z = layer(Z)
+            return self.activation(inputs + Z)
+
+    return ResidualUnit(filters_in)
+
+
+def handy_rl_resnet(x):
+    from tensorflow import keras
+
+    initializer = keras.initializers.VarianceScaling(
+        scale=2.0, mode='fan_in', distribution='truncated_normal')
+
+    layers, filters = 12, 32
+
+    x = keras.layers.Lambda(circular_padding)(x)
+    x = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False)(x)
+    x = keras.layers.BatchNormalization()(x)
+    x = keras.layers.Activation("relu")(x)
+
+    for _ in range(layers):
+        x = simplified_residual_unit(filters)(x)
+
+    return x
+
+
 def stem(input_shape):
     import tensorflow as tf
     from tensorflow import keras
@@ -67,7 +120,8 @@ def stem(input_shape):
     # feature maps
     features_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
     features = features_preprocessing_layer(feature_maps_input)
-    conv_output = conv_layer(features)
+    # conv_output = conv_layer(features)
+    conv_output = handy_rl_resnet(features)
     flatten_conv_output = layers.Flatten()(conv_output)
     # concatenate inputs
     scalars_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
