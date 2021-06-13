@@ -67,7 +67,9 @@ class Agent(abc.ABC):
         self._iterators = None
         # self._sampling_meter = 0
 
-    @tf.function
+        if not config["debug"]:
+            self._predict = tf.function(self._predict)
+
     def _predict(self, observation):
         return self._model(observation)
 

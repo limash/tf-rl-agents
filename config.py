@@ -78,11 +78,11 @@ CONF_CategoricalDQN = {
 CONF_ActorCritic = {
     "agent": "actor-critic",
     "environment": "gym_goose:goose-full_control-v3",
-    "multicall": False,
-    "debug": True,
+    "multicall": True,
+    "debug": False,
     #
     "buffer": "n_points",
-    "n_points": 10,
+    "n_points": 5,
     "all_trajectories": False,
     "buffer_size": 500000,
     "batch_size": 64,

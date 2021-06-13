@@ -112,6 +112,9 @@ def stem(input_shape):
     from tensorflow import keras
     import tensorflow.keras.layers as layers
 
+    initializer = keras.initializers.VarianceScaling(
+        scale=2.0, mode='fan_in', distribution='truncated_normal')
+
     feature_maps_shape, scalar_features_shape = input_shape
     # create inputs
     feature_maps_input = layers.Input(shape=feature_maps_shape, name="feature_maps", dtype=tf.uint8)
@@ -122,13 +125,27 @@ def stem(input_shape):
     features = features_preprocessing_layer(feature_maps_input)
     # conv_output = conv_layer(features)
     conv_output = handy_rl_resnet(features)
+    # processing
+    # h_head_filtered = keras.layers.Multiply()([tf.expand_dims(features[:, :, :, 0], -1), conv_output])
+    # conv_proc_output = keras.layers.Conv2D(32, 1, kernel_initializer=initializer)(conv_output)
     flatten_conv_output = layers.Flatten()(conv_output)
+    x = layers.Dense(100, kernel_initializer=initializer,
+                     kernel_regularizer=keras.regularizers.l2(0.01),
+                     use_bias=False)(flatten_conv_output)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
+
     # concatenate inputs
     scalars_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
     scalars = scalars_preprocessing_layer(scalar_feature_input)
-    x = layers.Concatenate(axis=-1)([flatten_conv_output, scalars])
+    x = layers.Concatenate(axis=-1)([x, scalars])
     # mlp
-    x = mlp_layer(x)
+    # x = mlp_layer(x)
+    x = layers.Dense(100, kernel_initializer=initializer,
+                     kernel_regularizer=keras.regularizers.l2(0.01),
+                     use_bias=False)(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.ELU()(x)
 
     return inputs, x
 
