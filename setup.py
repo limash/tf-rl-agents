@@ -5,7 +5,5 @@ setup(name='tf_reinforcement_agents',
       install_requires=['numpy',
                         'matplotlib',
                         'tensorflow',
-                        'ray',
-                        'reverb',
                         'gym']
       )
