@@ -49,7 +49,7 @@ class Agent(abc.ABC):
             # a maximum number of points in geese environment
             self._n_points = 200
             self._collect = self._collect_episode
-            self._items_sampled = 0
+            self._items_sampled = [0, ]
         else:
             self._is_all_trajectories = config["all_trajectories"]
             self._n_points = config["n_points"]
@@ -132,6 +132,7 @@ class Agent(abc.ABC):
         action_negative, reward_zero = tf.constant(-1), tf.constant(0.)
         done_true, done_false = tf.constant(1.), tf.constant(0.)
         policy_logits_zeros = tf.constant([0., 0., 0., 0.])
+        rewards_saver = [None, None, None, None]
         obs_zeros = (tf.zeros(self._feature_maps_shape, dtype=tf.uint8),
                      tf.zeros(self._scalar_features_shape, dtype=tf.uint8))
 
@@ -148,10 +149,11 @@ class Agent(abc.ABC):
         for _ in range(self._n_points - 1):
             if all(dones):
                 if epsilon is None:
-                    [writer.append((action_negative, policy_logits_zeros, obs_zeros, reward_zero, done_true))
-                     for writer in writers]
+                    [writer.append((action_negative, policy_logits_zeros, obs_zeros, rewards_saver[i], done_true))
+                     for i, writer in enumerate(writers)]
                 else:
-                    [writer.append((action_negative, obs_zeros, reward_zero, done_true)) for writer in writers]
+                    [writer.append((action_negative, obs_zeros, rewards_saver[i], done_true))
+                     for i, writer in enumerate(writers)]
                 continue
 
             if epsilon is None:
@@ -170,7 +172,20 @@ class Agent(abc.ABC):
             obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
             for i, writer in enumerate(writers):
                 action, reward, done = actions[i], rewards[i], dones[i]
-                obs = obsns[i][0], obsns[i][1]
+                if done:
+                    # the first 'done' encounter, save a final reward
+                    if rewards_saver[i] is None:
+                        rewards_saver[i] = reward
+                    # consequent 'done' encounters, put zero actions and logits
+                    else:
+                        action = action_negative
+                        if epsilon is None:
+                            policy_logits[i] = policy_logits_zeros
+                    obs = obs_zeros
+                    # if 'done', store final rewards
+                    reward = rewards_saver[i]
+                else:
+                    obs = obsns[i][0], obsns[i][1]
                 obs_records.append(obs)
                 if epsilon is None:
                     writer.append((action, policy_logits[i], obs, reward, done))
@@ -377,7 +392,11 @@ class Agent(abc.ABC):
 
     def _sample_experience(self, fraction):
         samples = []
-        if self._is_all_trajectories:
+        if self._is_full_episode:
+            iterator = self._iterators[0]
+            samples.append(next(iterator))
+            self._items_sampled[0] += self._sample_batch_size
+        elif self._is_all_trajectories:
             for i, iterator in enumerate(self._iterators):
                 trigger = tf.random.uniform(shape=[])
                 # sample 2 steps all the time, further steps with decreasing probability no less than 0.25
@@ -385,6 +404,7 @@ class Agent(abc.ABC):
                     samples.append(None)
                 else:
                     samples.append(next(iterator))
+                    self._items_sampled[i] += self._sample_batch_size
         else:
             # sampling for _collect_some_trajectories_
             for i, iterator in enumerate(self._iterators):
@@ -420,6 +440,10 @@ class Agent(abc.ABC):
     def _training_step(self, *args, **kwargs):
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def _training_step_full(self, *args, **kwargs):
+        raise NotImplementedError
+
     def _train(self, samples_in):
         for i, sample in enumerate(samples_in):
             if sample is not None:
@@ -432,12 +456,18 @@ class Agent(abc.ABC):
                     key, probability, table_size, priority = sample.info
                     experiences, info = (action, policy_logits, obs, reward, done), (
                         key, probability, table_size, priority)
-                    self._training_step(*experiences, steps=i + 2, info=info)
+                    if self._is_full_episode:
+                        self._training_step_full(*experiences, steps=200, info=info)
+                    else:
+                        self._training_step(*experiences, steps=i + 2, info=info)
                 else:
                     action, obs, reward, done = sample.data
                     key, probability, table_size, priority = sample.info
                     experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
-                    self._training_step(*experiences, steps=i + 2, info=info)
+                    if self._is_full_episode:
+                        self._training_step_full(*experiences, steps=200, info=info)
+                    else:
+                        self._training_step(*experiences, steps=i + 2, info=info)
 
     def train_collect(self, iterations_number=20000, eval_interval=2000):
 

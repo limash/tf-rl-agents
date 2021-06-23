@@ -62,14 +62,11 @@ def circular_padding(x):
     return x
 
 
-def simplified_residual_unit(filters_in):
+def simplified_residual_unit(filters_in, initializer_in):
     from tensorflow import keras
 
-    initializer = keras.initializers.VarianceScaling(
-        scale=2.0, mode='fan_in', distribution='truncated_normal')
-
     class ResidualUnit(keras.layers.Layer):
-        def __init__(self, filters, activation="relu", **kwargs):
+        def __init__(self, filters, initializer, activation="relu", **kwargs):
             super().__init__(**kwargs)
 
             self.activation = keras.activations.get(activation)
@@ -85,14 +82,11 @@ def simplified_residual_unit(filters_in):
                 Z = layer(Z)
             return self.activation(inputs + Z)
 
-    return ResidualUnit(filters_in)
+    return ResidualUnit(filters_in, initializer_in)
 
 
-def handy_rl_resnet(x):
+def handy_rl_resnet(x, initializer):
     from tensorflow import keras
-
-    initializer = keras.initializers.VarianceScaling(
-        scale=2.0, mode='fan_in', distribution='truncated_normal')
 
     layers, filters = 12, 32
 
@@ -102,18 +96,15 @@ def handy_rl_resnet(x):
     x = keras.layers.Activation("relu")(x)
 
     for _ in range(layers):
-        x = simplified_residual_unit(filters)(x)
+        x = simplified_residual_unit(filters, initializer)(x)
 
     return x
 
 
-def stem(input_shape):
+def stem(input_shape, initializer):
     import tensorflow as tf
     from tensorflow import keras
     import tensorflow.keras.layers as layers
-
-    initializer = keras.initializers.VarianceScaling(
-        scale=2.0, mode='fan_in', distribution='truncated_normal')
 
     feature_maps_shape, scalar_features_shape = input_shape
     # create inputs
@@ -124,7 +115,7 @@ def stem(input_shape):
     features_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
     features = features_preprocessing_layer(feature_maps_input)
     # conv_output = conv_layer(features)
-    conv_output = handy_rl_resnet(features)
+    conv_output = handy_rl_resnet(features, initializer)
     # processing
     # h_head_filtered = keras.layers.Multiply()([tf.expand_dims(features[:, :, :, 0], -1), conv_output])
     # conv_proc_output = keras.layers.Conv2D(32, 1, kernel_initializer=initializer)(conv_output)
@@ -133,7 +124,8 @@ def stem(input_shape):
                      kernel_regularizer=keras.regularizers.l2(0.01),
                      use_bias=False)(flatten_conv_output)
     x = layers.BatchNormalization()(x)
-    x = layers.ELU()(x)
+    # x = layers.ELU()(x)
+    x = layers.ReLU()(x)
 
     # concatenate inputs
     scalars_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
@@ -145,7 +137,8 @@ def stem(input_shape):
                      kernel_regularizer=keras.regularizers.l2(0.01),
                      use_bias=False)(x)
     x = layers.BatchNormalization()(x)
-    x = layers.ELU()(x)
+    # x = layers.ELU()(x)
+    x = layers.ReLU()(x)
 
     return inputs, x
 
@@ -177,12 +170,18 @@ def get_actor_critic(input_shape, n_outputs):
     from tensorflow import keras
     import tensorflow.keras.layers as layers
 
-    inputs, x = stem(input_shape)
-    # this initialization in the last layer decreases variance in the last layer
-    initializer = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+    initializer_glorot = keras.initializers.GlorotUniform()
+    initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+    bias_initializer = keras.initializers.Constant(-0.2)
+    # initializer_vs = keras.initializers.VarianceScaling(
+    #     scale=2.0, mode='fan_in', distribution='truncated_normal')
 
-    policy_logits = layers.Dense(n_outputs, kernel_initializer=initializer)(x)  # are not normalized logs
-    baseline = layers.Dense(1, kernel_initializer=initializer)(x)
+    inputs, x = stem(input_shape, initializer_glorot)
+
+    policy_logits = layers.Dense(n_outputs,
+                                 kernel_initializer=initializer_glorot)(x)  # are not normalized logs
+    baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer,
+                            activation=keras.activations.tanh)(x)
 
     model = keras.Model(inputs=[inputs], outputs=[policy_logits, baseline])
 

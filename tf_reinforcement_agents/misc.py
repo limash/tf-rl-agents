@@ -4,6 +4,55 @@ import matplotlib.pyplot as plt
 import ray
 
 
+def get_prob_logs_from_logits(logits, actions, n_outputs):
+    probs = tf.nn.softmax(logits)
+    mask = tf.one_hot(actions, n_outputs, dtype=tf.float32)
+    masked_probs = tf.reduce_sum(probs * mask, axis=-1)
+    logs = tf.math.log(masked_probs)
+    return logs
+
+
+def prepare_td_lambda(values, returns, rewards, lmb, gamma):
+    from collections import deque
+
+    target_values = deque([returns])
+    for i in range(values.shape[0] - 1, 0, -1):
+        reward = rewards[i, :] if rewards is not None else 0
+        target_values.appendleft(reward + gamma * ((1 - lmb) * values[i, :] + lmb * target_values[0]))
+
+    target_values = tf.stack(tuple(target_values))
+    return target_values
+
+
+def tf_prepare_td_lambda_no_rewards(values, returns, lmb, gamma):
+    reward = 0
+    ta = tf.TensorArray(dtype=tf.float32, size=values.shape[0], dynamic_size=False)
+    row = returns
+    ta = ta.write(values.shape[0] - 1, row)
+    for i in tf.range(values.shape[0] - 1, 0, -1):
+        # prev = ta.read(i)  # read does not work properly
+        # row = reward + gamma * ((1 - lmb) * values[i, :] + lmb * prev)
+        row = reward + gamma * ((1 - lmb) * values[i, :] + lmb * row)
+        ta = ta.write(i - 1, row)
+
+    target_values = ta.stack()
+    return target_values
+
+
+def get_entropy(logits, mask=None):
+    # another way to calculate entropy:
+    # probs = tf.nn.softmax(logits)
+    # entropy = tf.keras.losses.categorical_crossentropy(probs, probs)
+    probs = tf.nn.softmax(logits)
+    log_probs = tf.nn.log_softmax(logits)
+    # log_probs = tf.math.log(probs)
+    if mask is not None:
+        probs = probs * mask
+        log_probs = log_probs * mask
+    entropy = tf.reduce_sum(-probs * log_probs, axis=-1)
+    return entropy
+
+
 def get_non_max(x):
     if x == 0:
         return tf.constant([1, 2, 3], dtype=tf.int32)
@@ -13,18 +62,6 @@ def get_non_max(x):
         return tf.constant([0, 1, 3], dtype=tf.int32)
     else:
         return tf.constant([0, 1, 2], dtype=tf.int32)
-
-
-def entropy_loss(logits):
-    # another way to calculate entropy:
-    # probs = tf.nn.softmax(logits)
-    # entropy = tf.keras.losses.categorical_crossentropy(probs, probs)
-    probs = tf.nn.softmax(logits)
-    log_probs = tf.nn.log_softmax(logits)
-    entropy = tf.reduce_sum(-probs * log_probs, axis=-1)
-    result = -tf.reduce_mean(entropy)
-    # result = -tf.reduce_sum(entropy)
-    return result
 
 
 # by Taaam, https://stackoverflow.com/questions/38492608/tensorflow-indexing-into-2d-tensor-with-1d-tensor
