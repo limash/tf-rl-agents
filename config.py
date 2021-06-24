@@ -78,25 +78,26 @@ CONF_CategoricalDQN = {
 CONF_ActorCritic = {
     "agent": "actor-critic",
     "environment": "gym_goose:goose-full_control-v3",
-    "multicall": False,
-    "debug": True,
+    "multicall": True,
+    "debug": False,
     #
-    # "buffer": "n_points",
-    "buffer": "full_episode",
-    # "n_points": 8,
-    # "all_trajectories": False,
+    # "buffer": "full_episode",
+    "buffer": "n_points",
+    "all_trajectories": False,
+    "n_points": 8,
     "buffer_size": 500000,
-    "batch_size": 8,
-    "init_episodes": 20,
+    "batch_size": 64,
+    "init_episodes": 100,
     #
-    "iterations_number": 10000,
-    "eval_interval": 2000,
+    "iterations_number": 20000,
+    "eval_interval": 3000,
     "entropy_c": tf.constant(2.e-3),
     "entropy_c_decay": tf.constant(0.3),
     "optimizer": tf.keras.optimizers.Adam(lr=1.e-6),
+    # "loss": None,
     "loss": tf.keras.losses.Huber(),
     # "loss": tf.keras.losses.MeanSquaredError(),
-    # "discount_rate": tf.constant(1., dtype=tf.float32),  # gamma, if full_episode, it is 1 hardcoded
-    "discount_rate": None,  # gamma, if full_episode, there is 1 hardcoded
+    "discount_rate": tf.constant(.999, dtype=tf.float32),
+    # "discount_rate": None,  # gamma, if full_episode, there is 1 hardcoded
     "lambda": tf.constant(.8, dtype=tf.float32)
 }

@@ -1,5 +1,6 @@
 import abc
 import itertools as it
+import time
 
 import numpy as np
 import tensorflow as tf
@@ -490,15 +491,21 @@ class Agent(abc.ABC):
             # do not collect new experience if we have not used previous
             fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
             # sample items (and train) 10 times more than collecting items to the last table
-            if fraction[-1] > 10:
+            if fraction[-1] > 20:
                 epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
+                # t1 = time.time()
                 self._collect(epsilon)
+                # t2 = time.time()
+                # print(f"Collecting. Step: {step_counter} Time: {t2-t1}")
 
             # sampling
             samples = self._sample_experience(fraction)
 
             # training
+            # t1 = time.time()
             self._train(samples)
+            # t2 = time.time()
+            # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
 
             # evaluation
             if step_counter % eval_interval == 0:

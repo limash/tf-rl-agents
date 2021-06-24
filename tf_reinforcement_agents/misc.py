@@ -8,7 +8,7 @@ def get_prob_logs_from_logits(logits, actions, n_outputs):
     probs = tf.nn.softmax(logits)
     mask = tf.one_hot(actions, n_outputs, dtype=tf.float32)
     masked_probs = tf.reduce_sum(probs * mask, axis=-1)
-    logs = tf.math.log(masked_probs)
+    logs = tf.math.log(tf.clip_by_value(masked_probs, 1.e-32, 1.))  # inappropriate values will be masked
     return logs
 
 

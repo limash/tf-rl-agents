@@ -52,6 +52,7 @@ class ACAgent(Agent):
 
         if not config["debug"]:
             self._training_step = tf.function(self._training_step)
+            self._training_step_full = tf.function(self._training_step_full)
 
         self._collect_several_episodes(config["init_episodes"])
 
@@ -115,7 +116,8 @@ class ACAgent(Agent):
             # actor_loss = tf.reduce_sum(actor_loss)
 
             # entropy loss
-            entropy_loss = self._entropy_c * misc.entropy_loss(logits)
+            entropy = misc.get_entropy(logits)
+            entropy_loss = -1 * self._entropy_c * tf.reduce_mean(entropy)
 
             loss = actor_loss + critic_loss + entropy_loss
         grads = tape.gradient(loss, self._model.trainable_variables)
@@ -170,8 +172,8 @@ class ACAgent(Agent):
             with tape.stop_recording():
                 log_rhos = target_action_log_probs - behaviour_action_log_probs
                 rhos = tf.exp(log_rhos)
-                rhos_masked = tf.where(actions == -1, 0., rhos)  # use where to remove nans
-                # rhos_masked = rhos * mask2d
+                # rhos_masked = tf.where(actions == -1, 0., rhos)  # use where to remove nans, should be outside tape
+                rhos_masked = rhos * mask2d
                 clipped_rhos = tf.minimum(tf.constant(1.), rhos_masked)
 
             # add final rewards to 'empty' spots in values
@@ -194,9 +196,10 @@ class ACAgent(Agent):
             critic_loss = .5 * tf.reduce_sum(tf.square(targets - values))
 
             # actor loss
-            # use where to get rid of -infinities
-            target_action_log_probs = tf.where(actions == -1, 0., target_action_log_probs)
-            # target_action_log_probs = target_action_log_probs * mask2d
+            # use where to get rid of -infinities, but probably it causes inability to calculate grads
+            # check https://stackoverflow.com/questions/33712178/tensorflow-nan-bug/42497444#42497444
+            # target_action_log_probs = tf.where(actions == -1, 0., target_action_log_probs)
+            target_action_log_probs = target_action_log_probs * mask2d
             actor_loss = -1 * target_action_log_probs * td_error
             # actor_loss = tf.reduce_mean(actor_loss)
             actor_loss = tf.reduce_sum(actor_loss)
