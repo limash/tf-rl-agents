@@ -114,31 +114,32 @@ def stem(input_shape, initializer):
     # feature maps
     features_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
     features = features_preprocessing_layer(feature_maps_input)
-    # conv_output = conv_layer(features)
-    conv_output = handy_rl_resnet(features, initializer)
+    conv_output = conv_layer(features)
+    # conv_output = handy_rl_resnet(features, initializer)
     # processing
     # h_head_filtered = keras.layers.Multiply()([tf.expand_dims(features[:, :, :, 0], -1), conv_output])
     # conv_proc_output = keras.layers.Conv2D(32, 1, kernel_initializer=initializer)(conv_output)
     flatten_conv_output = layers.Flatten()(conv_output)
-    x = layers.Dense(100, kernel_initializer=initializer,
-                     kernel_regularizer=keras.regularizers.l2(0.01),
-                     use_bias=False)(flatten_conv_output)
-    x = layers.BatchNormalization()(x)
-    # x = layers.ELU()(x)
-    x = layers.ReLU()(x)
+    # x = layers.Dense(100, kernel_initializer=initializer,
+    #                  kernel_regularizer=keras.regularizers.l2(0.01),
+    #                  use_bias=False)(flatten_conv_output)
+    # x = layers.BatchNormalization()(x)
+    # # x = layers.ELU()(x)
+    # x = layers.ReLU()(x)
 
     # concatenate inputs
     scalars_preprocessing_layer = keras.layers.Lambda(lambda obs: tf.cast(obs, tf.float32))
     scalars = scalars_preprocessing_layer(scalar_feature_input)
-    x = layers.Concatenate(axis=-1)([x, scalars])
+    # x = layers.Concatenate(axis=-1)([x, scalars])
+    x = layers.Concatenate(axis=-1)([flatten_conv_output, scalars])
     # mlp
-    # x = mlp_layer(x)
-    x = layers.Dense(100, kernel_initializer=initializer,
-                     kernel_regularizer=keras.regularizers.l2(0.01),
-                     use_bias=False)(x)
-    x = layers.BatchNormalization()(x)
-    # x = layers.ELU()(x)
-    x = layers.ReLU()(x)
+    x = mlp_layer(x)
+    # x = layers.Dense(100, kernel_initializer=initializer,
+    #                  kernel_regularizer=keras.regularizers.l2(0.01),
+    #                  use_bias=False)(x)
+    # x = layers.BatchNormalization()(x)
+    # # x = layers.ELU()(x)
+    # x = layers.ReLU()(x)
 
     return inputs, x
 
@@ -180,8 +181,9 @@ def get_actor_critic(input_shape, n_outputs):
 
     policy_logits = layers.Dense(n_outputs,
                                  kernel_initializer=initializer_glorot)(x)  # are not normalized logs
-    baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer,
-                            activation=keras.activations.tanh)(x)
+    # baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer,
+    #                         activation=keras.activations.tanh)(x)
+    baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer)(x)
 
     model = keras.Model(inputs=[inputs], outputs=[policy_logits, baseline])
 
