@@ -458,7 +458,7 @@ class Agent(abc.ABC):
                     experiences, info = (action, policy_logits, obs, reward, done), (
                         key, probability, table_size, priority)
                     if self._is_full_episode:
-                        self._training_step_full(*experiences, steps=200, info=info)
+                        self._training_step_full(*experiences, steps=tf.constant(200), info=info)
                     else:
                         self._training_step(*experiences, steps=i + 2, info=info)
                 else:

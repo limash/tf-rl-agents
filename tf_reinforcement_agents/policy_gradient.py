@@ -134,11 +134,11 @@ class ACAgent(Agent):
         dones = tf.transpose(dones)
 
         nsteps = tf.argmax(dones, axis=0, output_type=tf.int32)
-        ta = tf.TensorArray(dtype=tf.float32, size=nsteps.shape[0], dynamic_size=False)
-        for i in tf.range(nsteps.shape[0]):
+        ta = tf.TensorArray(dtype=tf.float32, size=self._sample_batch_size, dynamic_size=False)
+        for i in tf.range(self._sample_batch_size):
             row = tf.concat([tf.constant([0.]),
-                             tf.linspace(0., 1., nsteps[i] + 1),
-                             tf.ones(steps - nsteps[i] - 2)], axis=0)
+                             tf.linspace(0., 1., nsteps[i] + 1)[:-1],
+                             tf.ones(steps - nsteps[i] - 1)], axis=0)
             ta = ta.write(i, row)
         progress = ta.stack()
         progress = tf.transpose(progress)
