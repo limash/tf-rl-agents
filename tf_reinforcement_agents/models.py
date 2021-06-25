@@ -183,7 +183,8 @@ def get_actor_critic(input_shape, n_outputs):
                                  kernel_initializer=initializer_glorot)(x)  # are not normalized logs
     # baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer,
     #                         activation=keras.activations.tanh)(x)
-    baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer)(x)
+    # baseline = layers.Dense(1, kernel_initializer=initializer_random, bias_initializer=bias_initializer)(x)
+    baseline = layers.Dense(1, kernel_initializer=initializer_random)(x)
 
     model = keras.Model(inputs=[inputs], outputs=[policy_logits, baseline])
 

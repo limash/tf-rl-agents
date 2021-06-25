@@ -491,7 +491,7 @@ class Agent(abc.ABC):
             # do not collect new experience if we have not used previous
             fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
             # sample items (and train) 10 times more than collecting items to the last table
-            if fraction[-1] > 20:
+            if fraction[-1] > 10:
                 epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
                 # t1 = time.time()
                 self._collect(epsilon)
