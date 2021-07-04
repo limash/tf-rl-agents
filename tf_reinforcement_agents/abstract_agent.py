@@ -74,7 +74,6 @@ class Agent(abc.ABC):
     def _predict(self, observation):
         return self._model(observation)
 
-    @abc.abstractmethod
     def _policy(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -437,11 +436,9 @@ class Agent(abc.ABC):
         second_actions = actions[:, 1]
         return total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions
 
-    @abc.abstractmethod
     def _training_step(self, *args, **kwargs):
         raise NotImplementedError
 
-    @abc.abstractmethod
     def _training_step_full(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -470,7 +467,7 @@ class Agent(abc.ABC):
                     else:
                         self._training_step(*experiences, steps=i + 2, info=info)
 
-    def train_collect(self, iterations_number=20000, eval_interval=2000):
+    def do_train_collect(self, iterations_number=20000, eval_interval=2000):
 
         target_model_update_interval = 3000
         epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
