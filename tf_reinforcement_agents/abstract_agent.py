@@ -398,7 +398,7 @@ class Agent(abc.ABC):
     #         self._collect(epsilon)
     #         items_created = sum([item.current_size for item in self._replay_memory_client.server_info().values()])
 
-    def _sample_experience(self, fraction):
+    def _sample_experience(self, fraction=None):
         samples = []
         if self._is_full_episode:
             iterator = self._iterators[0]
@@ -489,25 +489,25 @@ class Agent(abc.ABC):
         steps = 0
         eval_counter = 0
 
-        # for step_counter in range(1, iterations_number + 1):
-        step_counter = 0
         while True:
-            # collecting
-            items_created = [self._replay_memory_client.server_info()[table_name].current_size
-                             for table_name in self._table_names]
+            items_created = []
+            for table_name in self._table_names:
+                server_info = self._replay_memory_client.server_info()[table_name]
+                items_total = server_info.current_size + server_info.num_deleted_episodes
+                items_created.append(items_total)
+
             # wait if there are not enough data in the buffer
             if items_created[-1] < self._sample_batch_size:
                 print("Sleeping")
                 time.sleep(5)
                 continue
+            else:
+                break
 
-            step_counter += 1  # increment here after possible skips when a buffer is empty
-            fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
-            print(f"Step: {step_counter}, Sampled: {self._items_sampled[0]}, Created: {items_created[0]}, "
-                  f"Fraction: {fraction[0]:.2f} ")
+        for step_counter in range(1, iterations_number + 1):
 
             # sampling
-            samples = self._sample_experience(fraction)
+            samples = self._sample_experience()
 
             # training
             # t1 = time.time()
@@ -516,6 +516,24 @@ class Agent(abc.ABC):
             self._ray_queue.put(weights)  # send weights to the interprocess ray queue
             # t2 = time.time()
             # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
+
+            items_prev = items_created
+            items_created = []
+            for table_name in self._table_names:
+                server_info = self._replay_memory_client.server_info()[table_name]
+                items_total = server_info.current_size + server_info.num_deleted_episodes
+                items_created.append(items_total)
+
+            # fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
+            per_step_items_created = items_created[-1] - items_prev[-1]
+            if per_step_items_created == 0:
+                step_fraction = self._sample_batch_size
+            else:
+                step_fraction = self._sample_batch_size / per_step_items_created
+
+            print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
+                  f"Created total: {items_created[0]}, "
+                  f"Step sample to creation fraction: {step_fraction:.2f} ")
 
             # evaluation
             if step_counter % eval_interval == 0:
@@ -584,8 +602,13 @@ class Agent(abc.ABC):
 
         for step_counter in range(1, iterations_number + 1):
             # collecting
-            items_created = [self._replay_memory_client.server_info()[table_name].current_size
-                             for table_name in self._table_names]
+            # items_created = [self._replay_memory_client.server_info()[table_name].current_size
+            #                  for table_name in self._table_names]
+            items_created = []
+            for table_name in self._table_names:
+                server_info = self._replay_memory_client.server_info()[table_name]
+                items_total = server_info.current_size + server_info.num_deleted_episodes
+                items_created.append(items_total)
             # do not collect new experience if we have not used previous
             fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
             # sample items (and train) 10 times more than collecting items to the last table

@@ -185,6 +185,7 @@ def complex_call(env_name, agent_name, data, checkpoint, plot=False):
     # get results
     outputs = ray.get(trainer_futures)
     collect_info = ray.get(collect_info_futures)
+    print(f"Collect info: {collect_info}")
 
     rewards_array = np.empty(num_trainers)
     steps_array = np.empty(num_trainers)
@@ -232,5 +233,5 @@ if __name__ == '__main__':
         multi_call(config["environment"], config["agent"], init_data, init_checkpoint)
     elif config["setup"] == "complex":
         complex_call(config["environment"], config["agent"], init_data, init_checkpoint)
-    else:
+    elif config["setup"] == "single":
         one_call(config["environment"], config["agent"], init_data, init_checkpoint)

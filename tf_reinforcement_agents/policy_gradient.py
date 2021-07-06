@@ -125,7 +125,7 @@ class ACAgent(Agent):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
     def _training_step_full(self, actions, behaviour_policy_logits, observations, rewards, dones, steps, info):
-        # print("Tracing")
+        print("Tracing")
 
         actions = tf.transpose(actions)
         behaviour_policy_logits = tf.transpose(behaviour_policy_logits, perm=[1, 0, 2])
