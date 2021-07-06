@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 import gym
 import reverb
+import ray
 
 
 class Agent(abc.ABC):
@@ -13,6 +14,7 @@ class Agent(abc.ABC):
     def __init__(self, env_name, config,
                  buffer_table_names, buffer_server_port,
                  data=None, make_checkpoint=False,
+                 ray_queue=None, worker_id=None, workers_info=None, num_collectors=None
                  ):
         # environments; their hyperparameters
         self._train_env = gym.make(env_name)
@@ -64,9 +66,15 @@ class Agent(abc.ABC):
 
         self._start_epsilon = None
         self._final_epsilon = None
-        self._is_policy_gradient = True if self.__class__.__name__ == 'ACAgent' else False
+        self._is_policy_gradient = True if config["agent"] == "actor-critic" else False
         self._iterators = None
         # self._sampling_meter = 0
+
+        self._ray_queue = ray_queue
+
+        self._worker_id = worker_id
+        self._workers_info = workers_info
+        self._num_collectors = num_collectors
 
         if not config["debug"]:
             self._predict = tf.function(self._predict)
@@ -466,6 +474,99 @@ class Agent(abc.ABC):
                         self._training_step_full(*experiences, steps=200, info=info)
                     else:
                         self._training_step(*experiences, steps=i + 2, info=info)
+
+    def do_train(self, iterations_number=20000, eval_interval=2000):
+
+        target_model_update_interval = 3000
+        epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+            initial_learning_rate=self._start_epsilon,
+            decay_steps=iterations_number,
+            end_learning_rate=self._final_epsilon) if self._start_epsilon is not None else None
+
+        weights = None
+        mask = None
+        rewards = 0
+        steps = 0
+        eval_counter = 0
+
+        # for step_counter in range(1, iterations_number + 1):
+        step_counter = 0
+        while True:
+            # collecting
+            items_created = [self._replay_memory_client.server_info()[table_name].current_size
+                             for table_name in self._table_names]
+            # wait if there are not enough data in the buffer
+            if items_created[-1] < self._sample_batch_size:
+                print("Sleeping")
+                time.sleep(5)
+                continue
+
+            step_counter += 1  # increment here after possible skips when a buffer is empty
+            fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
+            print(f"Step: {step_counter}, Sampled: {self._items_sampled[0]}, Created: {items_created[0]}, "
+                  f"Fraction: {fraction[0]:.2f} ")
+
+            # sampling
+            samples = self._sample_experience(fraction)
+
+            # training
+            # t1 = time.time()
+            self._train(samples)
+            weights = self._model.get_weights()
+            self._ray_queue.put(weights)  # send weights to the interprocess ray queue
+            # t2 = time.time()
+            # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
+
+            # evaluation
+            if step_counter % eval_interval == 0:
+                eval_counter += 1
+                epsilon = 0 if epsilon_fn is not None else None
+                mean_episode_reward, mean_steps = self._evaluate_episodes(epsilon=epsilon)
+                print("----Evaluation------------------")
+                print(f"Iteration:{step_counter:.2f}; "
+                      f"Reward: {mean_episode_reward:.2f}; "
+                      f"Steps: {mean_steps:.2f}")
+                print("--------------------------------")
+                rewards += mean_episode_reward
+                steps += mean_steps
+
+            # update target model weights
+            if self._target_model and step_counter % target_model_update_interval == 0:
+                weights = self._model.get_weights()
+                self._target_model.set_weights(weights)
+
+            # store weights at the last step
+            if step_counter % iterations_number == 0:
+                print("----Final-results---------------")
+                epsilon = 0 if epsilon_fn is not None else None
+                mean_episode_reward, mean_steps = self._evaluate_episodes(num_episodes=10, epsilon=epsilon)
+                print(f"Final reward with a model policy is {mean_episode_reward:.2f}; "
+                      f"Final average steps survived is {mean_steps:.2f}")
+                output_reward = rewards / eval_counter
+                output_steps = steps / eval_counter
+                print(f"Average episode reward with a model policy is {output_reward:.2f}; "
+                      f"Final average per episode steps survived is {output_steps:.2f}")
+                print("--------------------------------")
+
+                weights = self._model.get_weights()
+                mask = list(map(lambda x: np.where(np.abs(x) < 0.1, 0., 1.), weights))
+
+                if self._make_checkpoint:
+                    try:
+                        checkpoint = self._replay_memory_client.checkpoint()
+                    except RuntimeError as err:
+                        print(err)
+                        checkpoint = err
+                else:
+                    checkpoint = None
+
+                # disable collectors
+                if self._workers_info is not None:
+                    ray.get(self._workers_info.set_done.remote(True))
+
+                break
+
+        return weights, mask, output_reward, output_steps, checkpoint
 
     def do_train_collect(self, iterations_number=20000, eval_interval=2000):
 

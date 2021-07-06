@@ -4,7 +4,7 @@ from pathlib import Path
 import reverb
 import numpy as np
 
-from tf_reinforcement_agents import deep_q_learning, policy_gradient, workers, storage, misc
+from tf_reinforcement_agents import deep_q_learning, policy_gradient, worker, storage, misc
 from config import *
 
 config = CONF_ActorCritic
@@ -121,11 +121,16 @@ def multi_call(env_name, agent_name, data, checkpoint, plot=False):
 
 def complex_call(env_name, agent_name, data, checkpoint, plot=False):
     import ray
+    from ray.util.queue import Queue
 
     num_trainers = 1
     num_collectors = 3
     parallel_calls = num_trainers + num_collectors
+
     ray.init(num_cpus=parallel_calls, num_gpus=1)
+    queue = Queue(maxsize=100)  # interprocess queue to store recent model weights
+    # ray.init(local_mode=True)  # for debugging
+    # queue = None  # queue does not work in debug mode
 
     if checkpoint is not None:
         path = str(Path(checkpoint).parent)  # due to https://github.com/deepmind/reverb/issues/12
@@ -147,23 +152,42 @@ def complex_call(env_name, agent_name, data, checkpoint, plot=False):
     agent_object = AGENTS[agent_name]
 
     trainer_objects = [ray.remote(num_gpus=1/num_trainers)(agent_object) for _ in range(num_trainers)]
-    worker_objects = [ray.remote(workers.Collector) for _ in range(num_collectors)]
+    worker_objects = [ray.remote(worker.Collector) for _ in range(num_collectors)]
     # objects = trainer_objects + worker_objects
 
+    # global variable to control getting items order from the interprocess queue and a done condition
+    workers_info = misc.GlobalVarActor.remote()
+
+    # initialization
     trainer_agents = []
-    for i, object in enumerate(trainer_objects):
-        make_checkpoint = True if i == 0 else False  # make a checkpoint only in the first worker
-        trainer_agents.append(object.remote(env_name, config,
-                              buffer.table_names, buffer.server_port,
-                              data, make_checkpoint))
+    for i, trainer_object in enumerate(trainer_objects):
+        make_checkpoint = True if i == 0 else False  # make a buffer checkpoint only in the first worker
+        trainer_agents.append(trainer_object.remote(env_name, config,
+                                                    buffer.table_names, buffer.server_port,
+                                                    data=data, make_checkpoint=make_checkpoint, ray_queue=queue,
+                                                    workers_info=workers_info))
+
+    worker_agents = []
+    for i, worker_object in enumerate(worker_objects):
+        worker_agents.append(worker_object.remote(env_name, config,
+                                                  buffer.table_names, buffer.server_port,
+                                                  data=data, make_checkpoint=False, ray_queue=queue,
+                                                  worker_id=i+1, workers_info=workers_info,
+                                                  num_collectors=num_collectors))
+
+    # remote call
     trainer_futures = [agent.do_train.remote(iterations_number=config["iterations_number"],
                                              eval_interval=config["eval_interval"])
                        for agent in trainer_agents]
 
-    outputs = ray.get(futures)
+    collect_info_futures = [agent.do_collect.remote() for agent in worker_agents]
 
-    rewards_array = np.empty(parallel_calls)
-    steps_array = np.empty(parallel_calls)
+    # get results
+    outputs = ray.get(trainer_futures)
+    collect_info = ray.get(collect_info_futures)
+
+    rewards_array = np.empty(num_trainers)
+    steps_array = np.empty(num_trainers)
     weights_list, mask_list = [], []
     for count, (weights, mask, reward, steps, _) in enumerate(outputs):
         weights_list.append(weights)

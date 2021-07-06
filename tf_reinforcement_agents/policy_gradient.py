@@ -54,7 +54,8 @@ class ACAgent(Agent):
             self._training_step = tf.function(self._training_step)
             self._training_step_full = tf.function(self._training_step_full)
 
-        self._collect_several_episodes(config["init_episodes"])
+        if config["setup"] != "complex":
+            self._collect_several_episodes(config["init_episodes"])
 
         reward, steps = self._evaluate_episodes(num_episodes=10)
         print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
@@ -124,7 +125,7 @@ class ACAgent(Agent):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
     def _training_step_full(self, actions, behaviour_policy_logits, observations, rewards, dones, steps, info):
-        print("Tracing")
+        # print("Tracing")
 
         actions = tf.transpose(actions)
         behaviour_policy_logits = tf.transpose(behaviour_policy_logits, perm=[1, 0, 2])

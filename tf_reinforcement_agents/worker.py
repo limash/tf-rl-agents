@@ -1,19 +1,21 @@
 import random
+# import time
+from abc import ABC
 
 import tensorflow as tf
 import numpy as np
+import ray
+from ray.util.queue import Empty
 
 from tf_reinforcement_agents.abstract_agent import Agent
 from tf_reinforcement_agents import models
-
-from tf_reinforcement_agents import storage, misc
 
 physical_devices = tf.config.list_physical_devices('GPU')
 if len(physical_devices) > 0:
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
-class Collector(Agent):
+class Collector(Agent, ABC):
 
     def __init__(self, env_name, config,
                  buffer_table_names, buffer_server_port,
@@ -66,6 +68,50 @@ class Collector(Agent):
             # return np.argmax(probabilities[0])
         return actions, logits
 
-    def collect(self):
-        epsilon = None
-        self._collect(epsilon)
+    def do_collect(self):
+        num_collects = 0
+        num_updates = 0
+
+        while True:
+            # trainer will switch to done on the last iteration
+            is_done = ray.get(self._workers_info.get_done.remote())
+            if is_done:
+                # print("Collecting done")
+                return num_collects, num_updates
+            # get the current turn, so collectors (workers) update weights one by one
+            curr_worker = ray.get(self._workers_info.get_global_v.remote())
+            # check the current turn
+            if curr_worker == self._worker_id:
+                if not self._ray_queue.empty():  # see below
+                    try:
+                        # block = False will cause an exception if there is no data in the queue,
+                        # which is not handled by a ray queue (incompatibility with python 3.8 ?)
+                        weights = self._ray_queue.get(block=False)
+                        if curr_worker == self._num_collectors:
+                            # print(f"Worker {curr_worker} updates weights")
+                            ray.get(self._workers_info.set_global_v.remote(1))
+                            num_updates += 1
+                        elif curr_worker < self._num_collectors:
+                            ray.get(self._workers_info.set_global_v.remote(curr_worker + 1))
+                            # print(f"Worker {curr_worker} update weights")
+                            num_updates += 1
+                        else:
+                            print("Wrong worker")
+                            raise NotImplementedError
+                    except Empty:
+                        weights = None
+                else:
+                    weights = None
+            else:
+                weights = None
+
+            if weights is not None:
+                self._model.set_weights(weights)
+                # print("Weights are updated")
+
+            epsilon = None
+            # t1 = time.time()
+            self._collect(epsilon)
+            num_collects += 1
+            # t2 = time.time()
+            # print(f"Collecting. Time: {t2 - t1}")
