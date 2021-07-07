@@ -161,11 +161,24 @@ class ACAgent(Agent):
                                                                     self._n_outputs)
 
         with tf.GradientTape() as tape:
+            # there are two ways to get outputs from the model
+            # 1: using map_fn along the time dimension, it is slow but consumes less memory
             logits, values = tf.map_fn(self._model, (maps, scalars),
                                        fn_output_signature=[tf.TensorSpec((self._sample_batch_size,
                                                                            self._n_outputs), dtype=tf.float32),
                                                             tf.TensorSpec((self._sample_batch_size, 1),
                                                                           dtype=tf.float32)])
+            # -
+            # 2: merging time and batch dimensions and applying the model at once, it is fast, but requires gpu memory
+            # maps_shape = tf.shape(maps)
+            # scalars_shape = tf.shape(scalars)
+            # maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
+            # scalars_merged = tf.reshape(scalars, (-1, scalars_shape[2]))
+            # logits_merged, values_merged = self._model((maps_merged, scalars_merged))
+            # logits = tf.reshape(logits_merged, (scalars_shape[0], scalars_shape[1], -1))
+            # values = tf.reshape(values_merged, (scalars_shape[0], scalars_shape[1], -1))
+            # -
+
             logits = tf.roll(logits, shift=1, axis=0)  # shift by 1 along time dimension, to match a pattern
             values = tf.roll(values, shift=1, axis=0)  # where actions, logits, etc. are due to observation
             target_action_log_probs = misc.get_prob_logs_from_logits(logits, actions, self._n_outputs)
@@ -182,7 +195,6 @@ class ACAgent(Agent):
 
             with tape.stop_recording():
                 # calculate targets
-                # td error with truncated IS weights (rhos), it is a constant:
                 # targets = misc.prepare_td_lambda(tf.squeeze(values), returns, None, self._lambda, 1.)
                 targets = misc.tf_prepare_td_lambda_no_rewards(tf.squeeze(values), returns, self._lambda, 1.)
                 targets = targets * mask2d
@@ -190,6 +202,7 @@ class ACAgent(Agent):
             values = values * mask2d
 
             with tape.stop_recording():
+                # td error with truncated IS weights (rhos), it is a constant:
                 td_error = clipped_rhos * (targets - values)
 
             # critic loss
@@ -197,7 +210,7 @@ class ACAgent(Agent):
             critic_loss = .5 * tf.reduce_sum(tf.square(targets - values))
 
             # actor loss
-            # use where to get rid of -infinities, but probably it causes inability to calculate grads
+            # use tf.where to get rid of -infinities, but probably it causes inability to calculate grads
             # check https://stackoverflow.com/questions/33712178/tensorflow-nan-bug/42497444#42497444
             # target_action_log_probs = tf.where(actions == -1, 0., target_action_log_probs)
             target_action_log_probs = target_action_log_probs * mask2d

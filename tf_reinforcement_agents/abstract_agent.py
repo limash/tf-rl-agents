@@ -489,6 +489,7 @@ class Agent(abc.ABC):
         steps = 0
         eval_counter = 0
 
+        # wait if there are not enough data in the buffer
         while True:
             items_created = []
             for table_name in self._table_names:
@@ -496,7 +497,6 @@ class Agent(abc.ABC):
                 items_total = server_info.current_size + server_info.num_deleted_episodes
                 items_created.append(items_total)
 
-            # wait if there are not enough data in the buffer
             if items_created[-1] < self._sample_batch_size:
                 print("Sleeping")
                 time.sleep(5)
@@ -504,6 +504,7 @@ class Agent(abc.ABC):
             else:
                 break
 
+        # the main training loop
         for step_counter in range(1, iterations_number + 1):
 
             # sampling
@@ -518,6 +519,7 @@ class Agent(abc.ABC):
             # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
 
             items_prev = items_created
+            # get from a buffer the total number of created elements since a buffer initialization
             items_created = []
             for table_name in self._table_names:
                 server_info = self._replay_memory_client.server_info()[table_name]
