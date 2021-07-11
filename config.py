@@ -82,18 +82,18 @@ CONF_ActorCritic = {
     "debug": False,
     #
     "buffer": "full_episode",
+    "n_points": 32,  # if full episode, it collects an episode first and then splits it to n_points pieces
     # "buffer": "n_points",
     # "all_trajectories": False,
-    # "n_points": 5,
-    "buffer_size": 10000,
-    "batch_size": 100,
-    "init_episodes": None,  # not required by 'complex' setup
+    "buffer_size": 500000,
+    "batch_size": 55,
+    "init_episodes": 1,  # not required by 'complex' setup
     #
-    "iterations_number": 100,
-    "eval_interval": 10,
-    "entropy_c": tf.constant(2.5e-4),
+    "iterations_number": 20000,
+    "eval_interval": 1000,
+    "entropy_c": tf.constant(2.e-3),
     "entropy_c_decay": tf.constant(0.3),
-    "optimizer": tf.keras.optimizers.Adam(lr=1.e-5),
+    "optimizer": tf.keras.optimizers.Adam(lr=1.e-6),
     "loss": None,
     # "loss": tf.keras.losses.Huber(),
     # "loss": tf.keras.losses.MeanSquaredError(),

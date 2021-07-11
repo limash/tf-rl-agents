@@ -48,14 +48,13 @@ class Agent(abc.ABC):
         self._sample_batch_size = config["batch_size"]
 
         self._is_full_episode = True if config["buffer"] == "full_episode" else False
+        self._n_points = config["n_points"]
         if self._is_full_episode:
             # a maximum number of points in geese environment
-            self._n_points = 200
             self._collect = self._collect_episode
             self._items_sampled = [0, ]
         else:
             self._is_all_trajectories = config["all_trajectories"]
-            self._n_points = config["n_points"]
             if self._is_all_trajectories:
                 self._collect = self._collect_trajectories_from_episode
             else:
@@ -132,6 +131,8 @@ class Agent(abc.ABC):
         # writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
         #            for _ in range(self._n_players)]
         writers = [[] for _ in range(self._n_players)]
+        ray_writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
+                       for _ in range(self._n_players)]
         dones = [False for _ in range(self._n_players)]  # for a first check
         obs_records = []
         info = None
@@ -153,16 +154,44 @@ class Agent(abc.ABC):
                 writer.append((action_negative, policy_logits_zeros, obs, reward_zero, done_false))
             else:
                 writer.append((action_negative, obs, reward_zero, done_false))
+        step_counter = 1  # start with 1, since we have at least initialization
 
-        for _ in range(self._n_points - 1):
+        while True:
             if all(dones):
-                if epsilon is None:
-                    [writer.append((action_negative, policy_logits_zeros, obs_zeros, rewards_saver[i], done_true))
-                     for i, writer in enumerate(writers)]
-                else:
-                    [writer.append((action_negative, obs_zeros, rewards_saver[i], done_true))
-                     for i, writer in enumerate(writers)]
-                continue
+                # if episode has ended before number of points required to store, put some more points
+                steps_to_save = step_counter
+                if step_counter < self._n_points:
+                    for _ in range(self._n_points - step_counter):
+                        if epsilon is None:
+                            [writer.append((action_negative, policy_logits_zeros, obs_zeros,
+                                            rewards_saver[i], done_true))
+                             for i, writer in enumerate(writers)]
+                        else:
+                            [writer.append((action_negative, obs_zeros, rewards_saver[i], done_true))
+                             for i, writer in enumerate(writers)]
+                    steps_to_save = self._n_points
+
+                for step in range(steps_to_save):
+                    for i, ray_writer in enumerate(ray_writers):
+                        is_episode_done = done_false if step + 1 < step_counter else done_true
+                        action, logits, obs, reward, done = (writers[i][step][0], writers[i][step][1],
+                                                             writers[i][step][2], writers[i][step][3],
+                                                             writers[i][step][4])
+                        try:
+                            ray_writer.append((action, logits, obs, reward, done, rewards_saver[i], is_episode_done))
+                            if step >= self._n_points - 1:
+                                ray_writer.create_item(table=self._table_names[0],
+                                                       num_timesteps=self._n_points, priority=1.)
+                                if done:
+                                    ray_writer.close()
+                        except RuntimeError:
+                            # continue writing with a next writer if a current one is closed
+                            continue
+
+                # [ray_writer.close() for ray_writer in ray_writers]
+                break
+
+            step_counter += 1
 
             if epsilon is None:
                 actions, policy_logits = self._policy(obs_records)
@@ -200,22 +229,22 @@ class Agent(abc.ABC):
                 else:
                     writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
 
-        for writer in writers:
-            if epsilon is None:
-                actions = tf.stack([item[0] for item in writer])
-                policy_logits = tf.stack([item[1] for item in writer])
-                obsns = [tf.stack([item[2][i] for item in writer]) for i in range(2)]
-                rewards = tf.stack([item[3] for item in writer])
-                dones = tf.stack([item[4] for item in writer])
-                episode = (actions, policy_logits, obsns, rewards, dones)
-            else:
-                actions = tf.stack([item[0] for item in writer])
-                obsns = [tf.stack([item[1][i] for item in writer]) for i in range(2)]
-                rewards = tf.stack([item[2] for item in writer])
-                dones = tf.stack([item[3] for item in writer])
-                episode = (actions, obsns, rewards, dones)
+        # for writer in writers:
+        #     if epsilon is None:
+        #         actions = tf.stack([item[0] for item in writer])
+        #         policy_logits = tf.stack([item[1] for item in writer])
+        #         obsns = [tf.stack([item[2][i] for item in writer]) for i in range(2)]
+        #         rewards = tf.stack([item[3] for item in writer])
+        #         dones = tf.stack([item[4] for item in writer])
+        #         episode = (actions, policy_logits, obsns, rewards, dones)
+        #     else:
+        #         actions = tf.stack([item[0] for item in writer])
+        #         obsns = [tf.stack([item[1][i] for item in writer]) for i in range(2)]
+        #         rewards = tf.stack([item[2] for item in writer])
+        #         dones = tf.stack([item[3] for item in writer])
+        #         episode = (actions, obsns, rewards, dones)
 
-            self._replay_memory_client.insert(episode, {self._table_names[0]: 1.})
+        #     self._replay_memory_client.insert(episode, {self._table_names[0]: 1.})
 
     def _collect_some_trajectories_from_episode(self, epsilon):
         """
@@ -458,12 +487,12 @@ class Agent(abc.ABC):
                 # i = tf.constant(i, dtype=tf.float32)
                 # also passing a tuple of tf constants does not cause retracing
                 if self._is_policy_gradient:
-                    action, policy_logits, obs, reward, done = sample.data
+                    action, policy_logits, obs, reward, done, total_rewards, episode_dones = sample.data
                     key, probability, table_size, priority = sample.info
-                    experiences, info = (action, policy_logits, obs, reward, done), (
+                    experiences, info = (action, policy_logits, obs, reward, done, total_rewards, episode_dones), (
                         key, probability, table_size, priority)
                     if self._is_full_episode:
-                        self._training_step_full(*experiences, steps=tf.constant(200), info=info)
+                        self._training_step_full(*experiences, steps=self._n_points, info=info)
                     else:
                         self._training_step(*experiences, steps=i + 2, info=info)
                 else:
@@ -471,7 +500,7 @@ class Agent(abc.ABC):
                     key, probability, table_size, priority = sample.info
                     experiences, info = (action, obs, reward, done), (key, probability, table_size, priority)
                     if self._is_full_episode:
-                        self._training_step_full(*experiences, steps=200, info=info)
+                        self._training_step_full(*experiences, steps=self._n_points, info=info)
                     else:
                         self._training_step(*experiences, steps=i + 2, info=info)
 
@@ -488,6 +517,7 @@ class Agent(abc.ABC):
         rewards = 0
         steps = 0
         eval_counter = 0
+        print_interval = 100
 
         # wait if there are not enough data in the buffer
         while True:
@@ -513,29 +543,32 @@ class Agent(abc.ABC):
             # training
             # t1 = time.time()
             self._train(samples)
-            weights = self._model.get_weights()
-            self._ray_queue.put(weights)  # send weights to the interprocess ray queue
             # t2 = time.time()
             # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
 
-            items_prev = items_created
-            # get from a buffer the total number of created elements since a buffer initialization
-            items_created = []
-            for table_name in self._table_names:
-                server_info = self._replay_memory_client.server_info()[table_name]
-                items_total = server_info.current_size + server_info.num_deleted_episodes
-                items_created.append(items_total)
+            if step_counter % print_interval == 0:
+                if not self._ray_queue.full():
+                    weights = self._model.get_weights()
+                    self._ray_queue.put(weights)  # send weights to the interprocess ray queue
 
-            # fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
-            per_step_items_created = items_created[-1] - items_prev[-1]
-            if per_step_items_created == 0:
-                step_fraction = self._sample_batch_size
-            else:
-                step_fraction = self._sample_batch_size / per_step_items_created
+                items_prev = items_created
+                # get from a buffer the total number of created elements since a buffer initialization
+                items_created = []
+                for table_name in self._table_names:
+                    server_info = self._replay_memory_client.server_info()[table_name]
+                    items_total = server_info.current_size + server_info.num_deleted_episodes
+                    items_created.append(items_total)
 
-            print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
-                  f"Created total: {items_created[0]}, "
-                  f"Step sample to creation fraction: {step_fraction:.2f} ")
+                # fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
+                per_step_items_created = items_created[-1] - items_prev[-1]
+                if per_step_items_created == 0:
+                    step_fraction = self._sample_batch_size * print_interval
+                else:
+                    step_fraction = self._sample_batch_size * print_interval / per_step_items_created
+
+                print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
+                      f"Created total: {items_created[0]}, "
+                      f"Step sample to creation fraction: {step_fraction:.2f} ")
 
             # evaluation
             if step_counter % eval_interval == 0:

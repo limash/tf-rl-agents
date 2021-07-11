@@ -36,7 +36,7 @@ class ACAgent(Agent):
                                                              self._input_shape,
                                                              self._sample_batch_size,
                                                              self._n_points,
-                                                             is_episode=True)
+                                                             is_episode=False)  # True if use insert in a buffer
             self._iterators = [iter(dataset), ]
         else:
             print("Check a buffer argument in config")
@@ -50,11 +50,12 @@ class ACAgent(Agent):
             self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
             self._model.set_weights(self._data['weights'])
 
+        self._is_debug = config["debug"]
         if not config["debug"]:
             self._training_step = tf.function(self._training_step)
             self._training_step_full = tf.function(self._training_step_full)
 
-        if config["setup"] != "complex":
+        if config["setup"] != "complex":  # in a complex setup workers will gather experience
             self._collect_several_episodes(config["init_episodes"])
 
         reward, steps = self._evaluate_episodes(num_episodes=10)
@@ -75,7 +76,8 @@ class ACAgent(Agent):
 
         return actions, logits
 
-    def _training_step(self, actions, behaviour_policy_logits, observations, rewards, dones, steps, info):
+    def _training_step(self, actions, behaviour_policy_logits, observations, rewards, dones,
+                       total_rewards, episode_dones, steps, info):
         print("Tracing")
         total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions = \
             self._prepare_td_arguments(actions, observations, rewards, dones, steps)
@@ -124,63 +126,81 @@ class ACAgent(Agent):
         grads = tape.gradient(loss, self._model.trainable_variables)
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
-    def _training_step_full(self, actions, behaviour_policy_logits, observations, rewards, dones, steps, info):
+    def _training_step_full(self, actions, behaviour_policy_logits, observations, rewards, dones,
+                            total_rewards, episode_dones, steps, info):
         print("Tracing")
+        if self._is_debug:
+            actions_v = actions.numpy()
+            rewards_v = rewards.numpy()
+            dones_v = dones.numpy()
+            total_rewards_v = total_rewards.numpy()
+            episode_dones_v = episode_dones.numpy()
 
-        actions = tf.transpose(actions)
-        behaviour_policy_logits = tf.transpose(behaviour_policy_logits, perm=[1, 0, 2])
-        maps = tf.transpose(observations[0], perm=[1, 0, 2, 3, 4])
-        scalars = tf.transpose(observations[1], perm=[1, 0, 2])
-        rewards = tf.transpose(rewards)
-        dones = tf.transpose(dones)
+        # actions = tf.transpose(actions)
+        # behaviour_policy_logits = tf.transpose(behaviour_policy_logits, perm=[1, 0, 2])
+        # maps = tf.transpose(observations[0], perm=[1, 0, 2, 3, 4])
+        # scalars = tf.transpose(observations[1], perm=[1, 0, 2])
+        # rewards = tf.transpose(rewards)
+        # dones = tf.transpose(dones)
 
-        nsteps = tf.argmax(dones, axis=0, output_type=tf.int32)
-        ta = tf.TensorArray(dtype=tf.float32, size=self._sample_batch_size, dynamic_size=False)
-        for i in tf.range(self._sample_batch_size):
-            row = tf.concat([tf.constant([0.]),
-                             tf.linspace(0., 1., nsteps[i] + 1)[:-1],
-                             tf.ones(steps - nsteps[i] - 1)], axis=0)
-            ta = ta.write(i, row)
-        progress = ta.stack()
-        progress = tf.transpose(progress)
+        # nsteps = tf.argmax(dones, axis=0, output_type=tf.int32)
+        # ta = tf.TensorArray(dtype=tf.float32, size=self._sample_batch_size, dynamic_size=False)
+        # for i in tf.range(self._sample_batch_size):
+        #     row = tf.concat([tf.constant([0.]),
+        #                      tf.linspace(0., 1., nsteps[i] + 1)[:-1],
+        #                      tf.ones(steps - nsteps[i] - 1)], axis=0)
+        #     ta = ta.write(i, row)
+        # progress = ta.stack()
+        # progress = tf.transpose(progress)
 
         # prepare a mask for the valid time steps
         # alive_positions = tf.where(actions != -1)
         # ones_array = tf.ones(alive_positions.shape[0])
         # mask = tf.scatter_nd(alive_positions, ones_array, actions.shape)
-        mask2d = tf.where(actions == -1, 0., 1.)
-        mask3d = tf.where(behaviour_policy_logits == 0., 0., 1.)
+        # mask2d = tf.where(actions == -1, 0., 1.)
+        mask2d = tf.concat((tf.zeros([tf.shape(dones)[0], 1]), (tf.ones_like(dones) - dones)[:, :-1]), axis=1)
+        # e_mask = tf.concat((tf.zeros([tf.shape(episode_dones)[0], 1]),
+        #                     (tf.ones_like(episode_dones) - episode_dones)[:, :-1]), axis=1)
+        # mask3d = tf.where(behaviour_policy_logits == 0., 0., 1.)
+        mask3d = tf.transpose(tf.ones([4, 1, 1]) * mask2d, perm=[1, 2, 0])
+        if self._is_debug:
+            mask2d_v = mask2d.numpy()
+            mask3d_v = mask3d.numpy()
+        # e_mask_v = e_mask.numpy()
 
         # get final rewards, currently there is the only reward in the end of a game
-        returns = rewards[-1, :]
+        # returns = total_rewards[-1, :]
 
         # behaviour_action_log_probs = -tf.nn.sparse_softmax_cross_entropy_with_logits(logits=behaviour_policy_logits,
         #                                                                              labels=actions)
-        # it is almost similar to above line, but above probably won't work with cpus
+        # it is almost similar to above line, but above probably won't work on cpus (due to -1 actions)
         behaviour_action_log_probs = misc.get_prob_logs_from_logits(behaviour_policy_logits, actions,
                                                                     self._n_outputs)
 
         with tf.GradientTape() as tape:
+            maps, scalars = observations
             # there are two ways to get outputs from the model
             # 1: using map_fn along the time dimension, it is slow but consumes less memory
-            logits, values = tf.map_fn(self._model, (maps, scalars),
-                                       fn_output_signature=[tf.TensorSpec((self._sample_batch_size,
-                                                                           self._n_outputs), dtype=tf.float32),
-                                                            tf.TensorSpec((self._sample_batch_size, 1),
-                                                                          dtype=tf.float32)])
+            # logits, values = tf.map_fn(self._model, (maps, scalars),
+            #                            fn_output_signature=[tf.TensorSpec((self._sample_batch_size,
+            #                                                                self._n_outputs), dtype=tf.float32),
+            #                                                 tf.TensorSpec((self._sample_batch_size, 1),
+            #                                                               dtype=tf.float32)])
             # -
             # 2: merging time and batch dimensions and applying the model at once, it is fast, but requires gpu memory
-            # maps_shape = tf.shape(maps)
-            # scalars_shape = tf.shape(scalars)
-            # maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
-            # scalars_merged = tf.reshape(scalars, (-1, scalars_shape[2]))
-            # logits_merged, values_merged = self._model((maps_merged, scalars_merged))
-            # logits = tf.reshape(logits_merged, (scalars_shape[0], scalars_shape[1], -1))
-            # values = tf.reshape(values_merged, (scalars_shape[0], scalars_shape[1], -1))
+            maps_shape = tf.shape(maps)
+            scalars_shape = tf.shape(scalars)
+            maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
+            scalars_merged = tf.reshape(scalars, (-1, scalars_shape[2]))
+            logits_merged, values_merged = self._model((maps_merged, scalars_merged))
+            logits = tf.reshape(logits_merged, (scalars_shape[0], scalars_shape[1], -1))
+            values = tf.reshape(values_merged, (scalars_shape[0], scalars_shape[1], -1))
             # -
 
-            logits = tf.roll(logits, shift=1, axis=0)  # shift by 1 along time dimension, to match a pattern
-            values = tf.roll(values, shift=1, axis=0)  # where actions, logits, etc. are due to observation
+            # logits = tf.roll(logits, shift=1, axis=0)  # shift by 1 along time dimension, to match a pattern
+            # values = tf.roll(values, shift=1, axis=0)  # where actions, logits, etc. led to the observation
+            logits = tf.roll(logits, shift=1, axis=1)  # shift by 1 along time dimension, to match a pattern
+            values = tf.roll(values, shift=1, axis=1)  # where actions, logits, etc. led to the observation
             target_action_log_probs = misc.get_prob_logs_from_logits(logits, actions, self._n_outputs)
 
             with tape.stop_recording():
@@ -191,15 +211,23 @@ class ACAgent(Agent):
                 clipped_rhos = tf.minimum(tf.constant(1.), rhos_masked)
 
             # add final rewards to 'empty' spots in values
-            values = tf.where(actions == -1, rewards, tf.squeeze(values))
+            # values = tf.squeeze(values) * mask2d  # to ensure zeros in not valid spots
+            # values = tf.where(e_mask == 0, total_rewards, values)  # to calculate targets
+            values = tf.where(mask2d == 0, total_rewards, tf.squeeze(values))  # to calculate targets
+            if self._is_debug:
+                clipped_rhos_v = clipped_rhos.numpy()
+                values_v = values.numpy()
 
             with tape.stop_recording():
                 # calculate targets
                 # targets = misc.prepare_td_lambda(tf.squeeze(values), returns, None, self._lambda, 1.)
-                targets = misc.tf_prepare_td_lambda_no_rewards(tf.squeeze(values), returns, self._lambda, 1.)
+                targets = misc.tf_prepare_td_lambda_no_rewards(values, total_rewards[:, -1], self._lambda, 1.)
                 targets = targets * mask2d
 
             values = values * mask2d
+            if self._is_debug:
+                values_v = values.numpy()
+                targets_v = targets.numpy()
 
             with tape.stop_recording():
                 # td error with truncated IS weights (rhos), it is a constant:
@@ -220,8 +248,9 @@ class ACAgent(Agent):
 
             # entropy loss
             entropy = misc.get_entropy(logits, mask3d)
+            entropy_loss = -1 * self._entropy_c * tf.reduce_sum(entropy)
             # entropy_loss = -1 * self._entropy_c * tf.reduce_mean(entropy)
-            entropy_loss = -1 * self._entropy_c * tf.reduce_sum(entropy * (1 - progress * (1 - self._entropy_c_decay)))
+            # entropy_loss = -self._entropy_c * tf.reduce_sum(entropy * (1 - progress * (1 - self._entropy_c_decay)))
 
             loss = actor_loss + critic_loss + entropy_loss
         grads = tape.gradient(loss, self._model.trainable_variables)

@@ -51,6 +51,8 @@ def initialize_dataset_with_logits(server_port, table_name, observations_shape, 
     logits_tf_shape = tf.TensorShape([4, ])
     rewards_tf_shape = tf.TensorShape([])
     dones_tf_shape = tf.TensorShape([])
+    total_rewards_tf_shape = tf.TensorShape([])
+    episode_dones_tf_shape = tf.TensorShape([])
 
     if is_episode:
         observations_tf_shape = ([n_points] + maps_shape, [n_points] + scalars_shape)
@@ -74,8 +76,9 @@ def initialize_dataset_with_logits(server_port, table_name, observations_shape, 
             server_address=f'localhost:{server_port}',
             table=table_name,
             max_in_flight_samples_per_worker=2 * batch_size,
-            dtypes=(tf.int32, tf.float32, obs_dtypes, tf.float32, tf.float32),
-            shapes=(actions_tf_shape, logits_tf_shape, observations_tf_shape, rewards_tf_shape, dones_tf_shape))
+            dtypes=(tf.int32, tf.float32, obs_dtypes, tf.float32, tf.float32, tf.float32, tf.float32),
+            shapes=(actions_tf_shape, logits_tf_shape, observations_tf_shape, rewards_tf_shape, dones_tf_shape,
+                    total_rewards_tf_shape, episode_dones_tf_shape))
         dataset = dataset.batch(n_points)
 
     dataset = dataset.batch(batch_size)

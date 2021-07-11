@@ -26,17 +26,17 @@ def prepare_td_lambda(values, returns, rewards, lmb, gamma):
 
 def tf_prepare_td_lambda_no_rewards(values, returns, lmb, gamma):
     reward = 0
-    ta = tf.TensorArray(dtype=tf.float32, size=values.shape[0], dynamic_size=False)
+    ta = tf.TensorArray(dtype=tf.float32, size=values.shape[1], dynamic_size=False)
     row = returns
-    ta = ta.write(values.shape[0] - 1, row)
-    for i in tf.range(values.shape[0] - 1, 0, -1):
+    ta = ta.write(values.shape[1] - 1, row)
+    for i in tf.range(values.shape[1] - 1, 0, -1):
         # prev = ta.read(i)  # read does not work properly
         # row = reward + gamma * ((1 - lmb) * values[i, :] + lmb * prev)
-        row = reward + gamma * ((1 - lmb) * values[i, :] + lmb * row)
+        row = reward + gamma * ((1 - lmb) * values[:, i] + lmb * row)
         ta = ta.write(i - 1, row)
 
     target_values = ta.stack()
-    return target_values
+    return tf.transpose(target_values)
 
 
 def get_entropy(logits, mask=None):
