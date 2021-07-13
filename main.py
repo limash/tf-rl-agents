@@ -124,7 +124,7 @@ def complex_call(env_name, agent_name, data, checkpoint, plot=False):
     from ray.util.queue import Queue
 
     num_trainers = 1
-    num_collectors = 10
+    num_collectors = 5
     parallel_calls = num_trainers + num_collectors
 
     ray.init(num_cpus=parallel_calls, num_gpus=1)

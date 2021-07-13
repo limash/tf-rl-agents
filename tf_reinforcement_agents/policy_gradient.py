@@ -180,7 +180,7 @@ class ACAgent(Agent):
         with tf.GradientTape() as tape:
             maps, scalars = observations
             # there are two ways to get outputs from the model
-            # 1: using map_fn along the time dimension, it is slow but consumes less memory
+            # 1: using map_fn along the time dimension (or whatever), it is slow but consumes less memory
             # logits, values = tf.map_fn(self._model, (maps, scalars),
             #                            fn_output_signature=[tf.TensorSpec((self._sample_batch_size,
             #                                                                self._n_outputs), dtype=tf.float32),

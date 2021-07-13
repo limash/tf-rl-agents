@@ -529,7 +529,7 @@ class Agent(abc.ABC):
 
             if items_created[-1] < self._sample_batch_size:
                 print("Sleeping")
-                time.sleep(5)
+                time.sleep(1)
                 continue
             else:
                 break
@@ -635,33 +635,53 @@ class Agent(abc.ABC):
         steps = 0
         eval_counter = 0
 
+        items_created = []
+        for table_name in self._table_names:
+            server_info = self._replay_memory_client.server_info()[table_name]
+            items_total = server_info.current_size + server_info.num_deleted_episodes
+            items_created.append(items_total)
+
         for step_counter in range(1, iterations_number + 1):
             # collecting
             # items_created = [self._replay_memory_client.server_info()[table_name].current_size
             #                  for table_name in self._table_names]
-            items_created = []
-            for table_name in self._table_names:
-                server_info = self._replay_memory_client.server_info()[table_name]
-                items_total = server_info.current_size + server_info.num_deleted_episodes
-                items_created.append(items_total)
             # do not collect new experience if we have not used previous
-            fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
-            # sample items (and train) 10 times more than collecting items to the last table
-            if fraction[-1] > 10:
-                epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
-                # t1 = time.time()
-                self._collect(epsilon)
-                # t2 = time.time()
-                # print(f"Collecting. Step: {step_counter} Time: {t2-t1}")
+            fraction = [x / y if (x != 0 and y != 0) else None for x, y in zip(self._items_sampled, items_created)]
 
             # sampling
             samples = self._sample_experience(fraction)
 
             # training
-            # t1 = time.time()
+            t1 = time.time()
             self._train(samples)
-            # t2 = time.time()
-            # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
+            t2 = time.time()
+            print(f"Training. Step: {step_counter} Time: {t2 - t1}")
+
+            # sample items (and train) 10 times more than collecting items to the last table
+            # if fraction[-1] > 10:
+            epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
+            t1 = time.time()
+            self._collect(epsilon)
+            t2 = time.time()
+            print(f"Collecting. Step: {step_counter} Time: {t2-t1}")
+
+            items_prev = items_created
+            items_created = []
+            for table_name in self._table_names:
+                server_info = self._replay_memory_client.server_info()[table_name]
+                items_total = server_info.current_size + server_info.num_deleted_episodes
+                items_created.append(items_total)
+
+            per_step_items_created = items_created[-1] - items_prev[-1]
+            if per_step_items_created == 0:
+                step_fraction = self._sample_batch_size
+            else:
+                step_fraction = self._sample_batch_size / per_step_items_created
+
+            print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
+                  f"Created total: {items_created[0]}, "
+                  f"Step sample to creation fraction: {step_fraction:.2f} ")
+            time.sleep(1)
 
             # evaluation
             if step_counter % eval_interval == 0:
