@@ -44,7 +44,8 @@ class ACAgent(Agent):
 
         # train a model from scratch
         if self._data is None:
-            self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
+            # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
+            self._model = models.get_actor_critic2()
         # continue a model training
         else:
             self._model = models.get_actor_critic(self._input_shape, self._n_outputs)

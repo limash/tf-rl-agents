@@ -4,13 +4,13 @@ setup(name='tf_reinforcement_agents',
       version='0.0.1',
       install_requires=[
             'numpy',
-            'pandas'
+            'pandas',
             'tensorflow',
             'tensorflow-probability',
             'matplotlib',
-            'kaggle-environments'
+            'kaggle-environments',
             'dm-reverb',
-            'ray[default]'
+            'ray[default]',
             'gym'
-                        ]
+            ]
       )
