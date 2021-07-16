@@ -127,14 +127,14 @@ class ACAgent(Agent):
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
 
     def _training_step_full(self, actions, behaviour_policy_logits, observations, rewards, dones,
-                            total_rewards, episode_dones, steps, info):
+                            total_rewards, progress, steps, info):
         print("Tracing")
         if self._is_debug:
             actions_v = actions.numpy()
             rewards_v = rewards.numpy()
             dones_v = dones.numpy()
             total_rewards_v = total_rewards.numpy()
-            episode_dones_v = episode_dones.numpy()
+            progress_v = progress.numpy()
 
         # actions = tf.transpose(actions)
         # behaviour_policy_logits = tf.transpose(behaviour_policy_logits, perm=[1, 0, 2])
@@ -248,9 +248,13 @@ class ACAgent(Agent):
 
             # entropy loss
             entropy = misc.get_entropy(logits, mask3d)
-            entropy_loss = -1 * self._entropy_c * tf.reduce_sum(entropy)
+            # entropy_loss = -1 * self._entropy_c * tf.reduce_sum(entropy)
             # entropy_loss = -1 * self._entropy_c * tf.reduce_mean(entropy)
-            # entropy_loss = -self._entropy_c * tf.reduce_sum(entropy * (1 - progress * (1 - self._entropy_c_decay)))
+            foo = 1 - progress * (1 - self._entropy_c_decay)
+            if self._is_debug:
+                entropy_v = entropy.numpy()
+                foo_v = foo.numpy()
+            entropy_loss = -self._entropy_c * tf.reduce_sum(entropy * foo)
 
             loss = actor_loss + critic_loss + entropy_loss
         grads = tape.gradient(loss, self._model.trainable_variables)

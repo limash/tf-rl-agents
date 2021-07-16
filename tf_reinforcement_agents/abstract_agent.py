@@ -155,43 +155,79 @@ class Agent(abc.ABC):
             else:
                 writer.append((action_negative, obs, reward_zero, done_false))
         step_counter = 1  # start with 1, since we have at least initialization
+        steps_per_worker_counter = [1 for _ in range(self._n_players)]
 
         while True:
             if all(dones):
-                # if episode has ended before number of points required to store, put some more points
-                steps_to_save = step_counter
+                steps_to_save = [None for _ in range(self._n_players)]
+                # progress of an entire episode
+                progress = tf.concat([tf.constant([0.]), tf.linspace(0., 1., step_counter)[:-1]], axis=0)
                 if step_counter < self._n_points:
-                    for _ in range(self._n_points - step_counter):
-                        if epsilon is None:
-                            [writer.append((action_negative, policy_logits_zeros, obs_zeros,
-                                            rewards_saver[i], done_true))
-                             for i, writer in enumerate(writers)]
-                        else:
-                            [writer.append((action_negative, obs_zeros, rewards_saver[i], done_true))
-                             for i, writer in enumerate(writers)]
-                    steps_to_save = self._n_points
+                    progress = tf.concat([progress, tf.ones(self._n_points - step_counter)], axis=0)
 
-                for step in range(steps_to_save):
-                    for i, ray_writer in enumerate(ray_writers):
-                        is_episode_done = done_false if step + 1 < step_counter else done_true
-                        action, logits, obs, reward, done = (writers[i][step][0], writers[i][step][1],
-                                                             writers[i][step][2], writers[i][step][3],
-                                                             writers[i][step][4])
+                for i, writer in enumerate(writers):
+                    # if episode has ended before number of points required to store, put some more points
+                    if step_counter < self._n_points:
+                        for _ in range(self._n_points - step_counter):
+                            if epsilon is None:
+                                writer.append((action_negative, policy_logits_zeros, obs_zeros,
+                                               rewards_saver[i], done_true))
+                            else:
+                                writer.append((action_negative, obs_zeros, rewards_saver[i], done_true))
+                        steps_to_save[i] = self._n_points
+                    # add some points which otherwise would never be initial points, maybe it can improve performance
+                    elif steps_per_worker_counter[i] > (200 - self._n_points):
+                        # for example if n_points = 5 and 196 is a final point, so the last trajectory saved
+                        # is [192, 193, 194, 195, 196]
+                        # 196 > 200 - 5 = 195 : +1 point to store [196, 197, 198, 199, 200*] or from 195?
+                        # all * points (# 200* and above) are dones
+                        # additional_points_to_save = step_counter - (200 - self._n_points)
+                        # or just save all points left in the current writer
+                        additional_points_to_save = self._n_points - 2
+                        steps_to_save[i] = steps_per_worker_counter[i] + additional_points_to_save
+                    else:
+                        steps_to_save[i] = max(steps_per_worker_counter[i], self._n_points)
+
+                for i, ray_writer in enumerate(ray_writers):
+                    for step in range(steps_to_save[i]):
                         try:
-                            ray_writer.append((action, logits, obs, reward, done, rewards_saver[i], is_episode_done))
+                            action, logits, obs, reward, done = (writers[i][step][0], writers[i][step][1],
+                                                                 writers[i][step][2], writers[i][step][3],
+                                                                 writers[i][step][4])
+                            ray_writer.append((action, logits, obs, reward, done,
+                                               rewards_saver[i], progress[step]))
                             if step >= self._n_points - 1:
                                 ray_writer.create_item(table=self._table_names[0],
                                                        num_timesteps=self._n_points, priority=1.)
                                 if done:
-                                    ray_writer.close()
+                                    # ray_writer.close()
+                                    if step == (steps_to_save[i] - 1):
+                                        ray_writer.close()
+                                    else:
+                                        continue
                         except RuntimeError:
                             # continue writing with a next writer if a current one is closed
                             continue
+                        except IndexError:
+                            # include additional probably unreachable points
+                            action, logits, obs, reward, done = (action_negative, policy_logits_zeros, obs_zeros,
+                                                                 reward, done)
+                            # probably this block is not necessary
+                            # try:
+                            #     current_progress = progress[step]
+                            # except BaseException:  # progress is a tensor, it returns a base exception
+                            #     current_progress = tf.constant(1.)
+                            current_progress = tf.constant(1.)
+
+                            ray_writer.append((action, logits, obs, reward, done,
+                                               rewards_saver[i], current_progress))
+                            ray_writer.create_item(table=self._table_names[0],
+                                                   num_timesteps=self._n_points, priority=1.)
+                            if step == (steps_to_save[i] - 1):
+                                ray_writer.close()
 
                 # [ray_writer.close() for ray_writer in ray_writers]
                 break
-
-            step_counter += 1
 
             if epsilon is None:
                 actions, policy_logits = self._policy(obs_records)
@@ -203,6 +239,7 @@ class Agent(abc.ABC):
             # environment step receives actions and outputs observations for the dead players also
             # but it takes no effect
             obsns, rewards, dones, info = self._train_env.step(actions)
+            step_counter += 1
             actions = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.int32), actions)
             rewards = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), rewards)
             dones = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), dones)
@@ -213,6 +250,7 @@ class Agent(abc.ABC):
                     # the first 'done' encounter, save a final reward
                     if rewards_saver[i] is None:
                         rewards_saver[i] = reward
+                        steps_per_worker_counter[i] += 1
                     # consequent 'done' encounters, put zero actions and logits
                     else:
                         action = action_negative
@@ -223,6 +261,7 @@ class Agent(abc.ABC):
                     reward = rewards_saver[i]
                 else:
                     obs = obsns[i][0], obsns[i][1]
+                    steps_per_worker_counter[i] += 1
                 obs_records.append(obs)
                 if epsilon is None:
                     writer.append((action, policy_logits[i], obs, reward, done))
@@ -487,14 +526,10 @@ class Agent(abc.ABC):
                 # i = tf.constant(i, dtype=tf.float32)
                 # also passing a tuple of tf constants does not cause retracing
                 if self._is_policy_gradient:
-                    action, policy_logits, obs, reward, done, total_rewards, episode_dones = sample.data
-                    key, probability, table_size, priority = sample.info
-                    experiences, info = (action, policy_logits, obs, reward, done, total_rewards, episode_dones), (
-                        key, probability, table_size, priority)
                     if self._is_full_episode:
-                        self._training_step_full(*experiences, steps=self._n_points, info=info)
+                        self._training_step_full(*sample.data, self._n_points, sample.info)
                     else:
-                        self._training_step(*experiences, steps=i + 2, info=info)
+                        self._training_step(*sample.data, i + 2, info=info)
                 else:
                     action, obs, reward, done = sample.data
                     key, probability, table_size, priority = sample.info
