@@ -716,7 +716,7 @@ class Agent(abc.ABC):
             print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
                   f"Created total: {items_created[0]}, "
                   f"Step sample to creation fraction: {step_fraction:.2f} ")
-            time.sleep(1)
+            # time.sleep(1)
 
             # evaluation
             if step_counter % eval_interval == 0:

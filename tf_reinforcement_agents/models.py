@@ -148,57 +148,89 @@ def get_actor_critic2():
     import tensorflow as tf
     from tensorflow import keras
 
+    def circular_padding(x):
+        x = tf.concat([x[:, -1:, :, :], x, x[:, :1, :, :]], 1)
+        x = tf.concat([x[:, :, -1:, :], x, x[:, :, :1, :]], 2)
+        return x
+
     class ResidualUnit(keras.layers.Layer):
-        def __init__(self, filters, initializer, activation, circular_pad, **kwargs):
+        def __init__(self, filters, initializer, activation, **kwargs):
             super().__init__(**kwargs)
 
-            self._circular_pad = circular_pad
-            self.activation = keras.activations.get(activation)
-            self.main_layers = [
+            self._filters = filters
+            self._activation = keras.activations.get(activation)
+            self._main_layers = [
                 keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
                 keras.layers.BatchNormalization()
             ]
 
         def call(self, inputs, **kwargs):
             x = inputs
-            if self._circular_pad:
-                x = tf.concat([x[:, -1:, :, :], x, x[:, :1, :, :]], 1)
-                x = tf.concat([x[:, :, -1:, :], x, x[:, :, :1, :]], 2)
+            x = circular_padding(x)
 
-            for layer in self.main_layers:
+            for layer in self._main_layers:
                 x = layer(x)
-            return self.activation(inputs + x)
+            return self._activation(inputs + x)
 
         def compute_output_shape(self, batch_input_shape):
-            if self._circular_pad:
-                return batch_input_shape
-            else:
-                batch, x, y, layers = batch_input_shape
-                return [batch, x - 2, y - 2, layers]
+            batch, x, y, _ = batch_input_shape
+            return [batch, x, y, self._filters]
 
     class ResidualModel(keras.Model):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
-            padding_layers = 12
-            no_padding_layers = 3
             filters = 32
 
             initializer = keras.initializers.VarianceScaling(scale=2.0, mode='fan_in', distribution='truncated_normal')
             initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
             activation = 'elu'
 
-            self._pad_residuals = [ResidualUnit(filters, initializer, activation, True) for _ in range(padding_layers)]
-            self._residuals = [ResidualUnit(filters, initializer, activation, False) for _ in range(no_padding_layers)]
-            self._all_residuals = self._pad_residuals + self._residuals
+            self._conv_block0 = [
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.ELU()
+            ]
+            self._conv_block1 = [
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.ELU()
+            ]
+            self._conv_block2 = [
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.ELU()
+            ]
+            self._conv_block3 = [
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.ELU()
+            ]
+            self._residual_block1 = [ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation)]
+            self._residual_block2 = [ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation)]
+            self._residual_block3 = [ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation)]
+
             self._flatten = keras.layers.Flatten()
-            self._dense_block = [keras.layers.Dense(1000, kernel_initializer=initializer,
-                                                    kernel_regularizer=keras.regularizers.l2(0.01),
-                                                    use_bias=False),
-                                 keras.layers.BatchNormalization(),
-                                 keras.layers.ELU()]
-            self._logits_block = keras.layers.Dense(4, kernel_initializer=initializer_random)
-            self._baseline_block = keras.layers.Dense(1, kernel_initializer=initializer_random)
+            self._dense_block = [
+                keras.layers.Dense(500, kernel_initializer=initializer,
+                                   kernel_regularizer=keras.regularizers.l2(0.01),
+                                   use_bias=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.ELU(),
+                keras.layers.Dense(100, kernel_initializer=initializer,
+                                   kernel_regularizer=keras.regularizers.l2(0.01),
+                                   use_bias=False),
+                keras.layers.BatchNormalization(),
+                keras.layers.ELU()
+            ]
+            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random)
 
         def call(self, inputs, training=None, mask=None):
             maps, scalars = inputs
@@ -206,16 +238,26 @@ def get_actor_critic2():
             scalars = tf.cast(scalars, tf.float32)
 
             x = maps
-            for layer in self._all_residuals:
+
+            x = circular_padding(x)
+            for layer in self._conv_block0:
                 x = layer(x)
+
+            for layer in self._residual_block1 + self._conv_block1:
+                x = layer(x)
+            for layer in self._residual_block2 + self._conv_block2:
+                x = layer(x)
+            for layer in self._residual_block3 + self._conv_block3:
+                x = layer(x)
+
             x = self._flatten(x)
 
             z = tf.concat([x, scalars], axis=-1)
-            for layer in self._dense_block * 2:
+            for layer in self._dense_block:
                 z = layer(z)
 
-            policy_logits = self._logits_block(z)
-            baseline = self._baseline_block(z)
+            policy_logits = self._logits(z)
+            baseline = self._baseline(z)
 
             return policy_logits, baseline
 

@@ -42,13 +42,15 @@ class ACAgent(Agent):
             print("Check a buffer argument in config")
             raise LookupError
 
-        # train a model from scratch
-        if self._data is None:
-            # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2()
+        # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
+        self._model = models.get_actor_critic2()
         # continue a model training
-        else:
-            self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
+        if self._data is not None:
+            # launch a model once to define structure
+            dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
+                           tf.ones(self._input_shape[1], dtype=tf.uint8))
+            dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
+            self._predict(dummy_input)
             self._model.set_weights(self._data['weights'])
 
         self._is_debug = config["debug"]
