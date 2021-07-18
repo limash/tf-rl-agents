@@ -33,6 +33,10 @@ class Collector(Agent, ABC):
             self._policy = self._dqn_policy
 
         if self._data is not None:
+            dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
+                           tf.ones(self._input_shape[1], dtype=tf.uint8))
+            dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
+            self._predict(dummy_input)
             self._model.set_weights(self._data['weights'])
 
     def _dqn_policy(self, obsns, epsilon, info):

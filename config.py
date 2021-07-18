@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_addons as tfa
 
 
 CONF_DQN = {
@@ -93,7 +94,8 @@ CONF_ActorCritic = {
     "eval_interval": 1000,
     "entropy_c": tf.constant(2.e-2),
     "entropy_c_decay": tf.constant(0.3),
-    "optimizer": tf.keras.optimizers.Adam(lr=1.e-6),
+    # "optimizer": tf.keras.optimizers.Adam(lr=1.e-6),
+    "optimizer": tfa.optimizers.AdamW(weight_decay=1.e-5, learning_rate=1.e-6),
     "loss": None,
     # "loss": tf.keras.losses.Huber(),
     # "loss": tf.keras.losses.MeanSquaredError(),
