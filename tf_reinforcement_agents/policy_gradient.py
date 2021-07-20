@@ -132,6 +132,7 @@ class ACAgent(Agent):
     def _training_step_full(self, actions, behaviour_policy_logits, observations, rewards, dones,
                             total_rewards, progress, steps, info):
         print("Tracing")
+
         if self._is_debug:
             actions_v = actions.numpy()
             rewards_v = rewards.numpy()
@@ -261,4 +262,8 @@ class ACAgent(Agent):
 
             loss = actor_loss + critic_loss + entropy_loss
         grads = tape.gradient(loss, self._model.trainable_variables)
+        grads = [tf.clip_by_norm(g, 4.0) for g in grads]
         self._optimizer.apply_gradients(zip(grads, self._model.trainable_variables))
+
+        data_count = tf.reduce_sum(mask2d)
+        return data_count

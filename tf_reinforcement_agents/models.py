@@ -148,6 +148,10 @@ def get_actor_critic2():
     import tensorflow as tf
     from tensorflow import keras
 
+    # physical_devices = tf.config.list_physical_devices('GPU')
+    # if len(physical_devices) > 0:
+    #     tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
     def circular_padding(x):
         x = tf.concat([x[:, -1:, :, :], x, x[:, :1, :, :]], 1)
         x = tf.concat([x[:, :, -1:, :], x, x[:, :, :1, :]], 2)
@@ -158,9 +162,9 @@ def get_actor_critic2():
             super().__init__(**kwargs)
 
             self._filters = filters
-            self._activation = keras.activations.get(activation)
+            self._activation = activation
             self._main_layers = [
-                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer),  # , use_bias=False),
                 keras.layers.BatchNormalization()
             ]
 
@@ -176,6 +180,68 @@ def get_actor_critic2():
             batch, x, y, _ = batch_input_shape
             return [batch, x, y, self._filters]
 
+    class ShortResidualModel(keras.Model):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+            filters = 32
+            layers = 12
+
+            # initializer = keras.initializers.HeNormal
+            initializer = keras.initializers.VarianceScaling(scale=2.0, mode='fan_in', distribution='truncated_normal')
+            initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+            activation = keras.activations.relu
+
+            self._conv_block_first = [
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer),
+                keras.layers.BatchNormalization(),
+                keras.layers.ReLU()
+            ]
+            self._conv_block_last = [
+                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, padding='same'),
+                keras.layers.BatchNormalization(),
+                keras.layers.ReLU()
+            ]
+            self._residual_block = [ResidualUnit(filters, initializer, activation) for _ in range(layers)]
+            # self._residual_block = [ResidualUnit(filters, initializer, activation),
+            #                         ResidualUnit(filters, initializer, activation),
+            #                         ResidualUnit(filters, initializer, activation)]
+
+            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
+                                                activation=keras.activations.tanh)
+
+        def call(self, inputs, training=None, mask=None):
+            maps, scalars = inputs
+            maps = tf.cast(maps, tf.float32)
+            # scalars = tf.cast(scalars, tf.float32)
+
+            x = maps
+
+            x = circular_padding(x)
+            for layer in self._conv_block_first:
+                x = layer(x)
+
+            for layer in self._residual_block + self._conv_block_last:
+                x = layer(x)
+
+            shape_x = tf.shape(x)
+            y = tf.reshape(x, (shape_x[0], -1, shape_x[-1]))
+            y = tf.reduce_mean(y, axis=1)
+
+            z = (x * maps[:, :, :, :1])
+            shape_z = tf.shape(z)
+            z = tf.reshape(z, (shape_z[0], -1, shape_z[-1]))
+            z = tf.reduce_sum(z, axis=1)
+
+            baseline = self._baseline(tf.concat([y, z], axis=1))
+            policy_logits = self._logits(z)
+
+            return policy_logits, baseline
+
+        def get_config(self):
+            pass
+
     class ResidualModel(keras.Model):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
@@ -184,7 +250,7 @@ def get_actor_critic2():
 
             initializer = keras.initializers.VarianceScaling(scale=2.0, mode='fan_in', distribution='truncated_normal')
             initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
-            activation = 'elu'
+            activation = tf.nn.elu
 
             self._conv_block0 = [
                 keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False),
@@ -208,11 +274,14 @@ def get_actor_critic2():
             ]
             self._residual_block1 = [ResidualUnit(filters, initializer, activation),
                                      ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation),
                                      ResidualUnit(filters, initializer, activation)]
             self._residual_block2 = [ResidualUnit(filters, initializer, activation),
                                      ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation),
                                      ResidualUnit(filters, initializer, activation)]
             self._residual_block3 = [ResidualUnit(filters, initializer, activation),
+                                     ResidualUnit(filters, initializer, activation),
                                      ResidualUnit(filters, initializer, activation),
                                      ResidualUnit(filters, initializer, activation)]
 
@@ -264,4 +333,4 @@ def get_actor_critic2():
         def get_config(self):
             pass
 
-    return ResidualModel()
+    return ShortResidualModel()

@@ -37,18 +37,19 @@ class Agent(abc.ABC):
         self._target_model = None
 
         # hyperparameters for optimization
+        self._default_lr = 3e-8
+        self._n_points = config["n_points"]
+        self._sample_batch_size = config["batch_size"]
+        self._data_cnt_ema = self._sample_batch_size * (self._n_points - 1)
         self._optimizer = config["optimizer"]
         self._loss_fn = config["loss"]
 
-        # buffer; hyperparameters for a reward calculation
+        # buffer
         self._table_names = buffer_table_names
         # an object with a client, which is used to store data on a server
         self._replay_memory_client = reverb.Client(f'localhost:{buffer_server_port}')
-        # make a batch size equal of a minimal size of a buffer
-        self._sample_batch_size = config["batch_size"]
 
         self._is_full_episode = True if config["buffer"] == "full_episode" else False
-        self._n_points = config["n_points"]
         if self._is_full_episode:
             # a maximum number of points in geese environment
             self._collect = self._collect_episode
@@ -512,6 +513,11 @@ class Agent(abc.ABC):
         second_actions = actions[:, 1]
         return total_rewards, first_observations, last_observations, last_dones, last_discounted_gamma, second_actions
 
+    def _get_learning_rate(self, data_cnt, batch_cnt, steps):
+        self._data_cnt_ema = self._data_cnt_ema * 0.8 + data_cnt / (1e-2 + batch_cnt) * 0.2
+        lr = self._default_lr * self._data_cnt_ema / (1 + steps * 1e-5)
+        return lr
+
     def _training_step(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -527,7 +533,8 @@ class Agent(abc.ABC):
                 # also passing a tuple of tf constants does not cause retracing
                 if self._is_policy_gradient:
                     if self._is_full_episode:
-                        self._training_step_full(*sample.data, self._n_points, sample.info)
+                        data_count = self._training_step_full(*sample.data, self._n_points, sample.info)
+                        return data_count
                     else:
                         self._training_step(*sample.data, i + 2, info=info)
                 else:
@@ -551,8 +558,13 @@ class Agent(abc.ABC):
         mask = None
         rewards = 0
         steps = 0
+        interval = 100
+        update_interval = interval / 4
         eval_counter = 0
-        print_interval = 100
+        data_counter = 0
+
+        lr = self._default_lr * self._data_cnt_ema
+        self._optimizer.learning_rate.assign(lr)
 
         # wait if there are not enough data in the buffer
         while True:
@@ -577,14 +589,20 @@ class Agent(abc.ABC):
 
             # training
             # t1 = time.time()
-            self._train(samples)
+            data_count = self._train(samples)
+            data_counter += data_count.numpy()
             # t2 = time.time()
             # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
 
-            if step_counter % print_interval == 0:
+            if step_counter % update_interval == 0:
                 if not self._ray_queue.full():
                     weights = self._model.get_weights()
                     self._ray_queue.put(weights)  # send weights to the interprocess ray queue
+
+            if step_counter % interval == 0:
+                lr = self._get_learning_rate(data_counter, interval, step_counter)
+                self._optimizer.learning_rate.assign(lr)
+                data_counter = 0
 
                 items_prev = items_created
                 # get from a buffer the total number of created elements since a buffer initialization
@@ -597,13 +615,14 @@ class Agent(abc.ABC):
                 # fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
                 per_step_items_created = items_created[-1] - items_prev[-1]
                 if per_step_items_created == 0:
-                    step_fraction = self._sample_batch_size * print_interval
+                    step_fraction = self._sample_batch_size * interval
                 else:
-                    step_fraction = self._sample_batch_size * print_interval / per_step_items_created
+                    step_fraction = self._sample_batch_size * interval / per_step_items_created
 
-                print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
+                print(f"Step: {step_counter}, Sampled: {self._items_sampled[0]}, "
                       f"Created total: {items_created[0]}, "
-                      f"Step sample to creation fraction: {step_fraction:.2f} ")
+                      f"Step sample/creation frac: {step_fraction:.2f}, "
+                      f"LR: {lr:.2e}")
 
             # evaluation
             if step_counter % eval_interval == 0:
@@ -669,12 +688,17 @@ class Agent(abc.ABC):
         rewards = 0
         steps = 0
         eval_counter = 0
+        interval = 10
+        data_counter = 0
 
         items_created = []
         for table_name in self._table_names:
             server_info = self._replay_memory_client.server_info()[table_name]
             items_total = server_info.current_size + server_info.num_deleted_episodes
             items_created.append(items_total)
+
+        lr = self._default_lr * self._data_cnt_ema
+        self._optimizer.learning_rate.assign(lr)
 
         for step_counter in range(1, iterations_number + 1):
             # collecting
@@ -687,36 +711,43 @@ class Agent(abc.ABC):
             samples = self._sample_experience(fraction)
 
             # training
-            t1 = time.time()
-            self._train(samples)
-            t2 = time.time()
-            print(f"Training. Step: {step_counter} Time: {t2 - t1}")
+            # t1 = time.time()
+            data_count = self._train(samples)
+            data_counter += data_count.numpy()
+            # t2 = time.time()
+            # print(f"Training. Step: {step_counter} Time: {t2 - t1}")
 
             # sample items (and train) 10 times more than collecting items to the last table
             # if fraction[-1] > 10:
             epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
-            t1 = time.time()
+            # t1 = time.time()
             self._collect(epsilon)
-            t2 = time.time()
-            print(f"Collecting. Step: {step_counter} Time: {t2-t1}")
+            # t2 = time.time()
+            # print(f"Collecting. Step: {step_counter} Time: {t2-t1}")
 
-            items_prev = items_created
-            items_created = []
-            for table_name in self._table_names:
-                server_info = self._replay_memory_client.server_info()[table_name]
-                items_total = server_info.current_size + server_info.num_deleted_episodes
-                items_created.append(items_total)
+            if step_counter % interval == 0:
+                lr = self._get_learning_rate(data_counter, interval, step_counter)
+                self._optimizer.learning_rate.assign(lr)
+                data_counter = 0
 
-            per_step_items_created = items_created[-1] - items_prev[-1]
-            if per_step_items_created == 0:
-                step_fraction = self._sample_batch_size
-            else:
-                step_fraction = self._sample_batch_size / per_step_items_created
+                items_prev = items_created
+                items_created = []
+                for table_name in self._table_names:
+                    server_info = self._replay_memory_client.server_info()[table_name]
+                    items_total = server_info.current_size + server_info.num_deleted_episodes
+                    items_created.append(items_total)
 
-            print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
-                  f"Created total: {items_created[0]}, "
-                  f"Step sample to creation fraction: {step_fraction:.2f} ")
-            # time.sleep(1)
+                per_step_items_created = items_created[-1] - items_prev[-1]
+                if per_step_items_created == 0:
+                    step_fraction = self._sample_batch_size * interval
+                else:
+                    step_fraction = self._sample_batch_size * interval / per_step_items_created
+
+                print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
+                      f"Created total: {items_created[0]}, "
+                      f"Sample / creation frac: {step_fraction:.2f}, "
+                      f"Learning rate: {lr:.2e}, "
+                      f"Data cnt ema: {self._data_cnt_ema:.2f}")
 
             # evaluation
             if step_counter % eval_interval == 0:
