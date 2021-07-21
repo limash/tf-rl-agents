@@ -1,4 +1,5 @@
 import abc
+import pickle
 import itertools as it
 import time
 
@@ -602,6 +603,7 @@ class Agent(abc.ABC):
             if step_counter % interval == 0:
                 lr = self._get_learning_rate(data_counter, interval, step_counter)
                 self._optimizer.learning_rate.assign(lr)
+                # lr = self._optimizer.learning_rate.numpy()
                 data_counter = 0
 
                 items_prev = items_created
@@ -636,6 +638,13 @@ class Agent(abc.ABC):
                 print("--------------------------------")
                 rewards += mean_episode_reward
                 steps += mean_steps
+
+                weights = self._model.get_weights()
+                data = {
+                    'weights': weights,
+                }
+                with open(f'data/data{step_counter}.pickle', 'wb') as f:
+                    pickle.dump(data, f, protocol=4)
 
             # update target model weights
             if self._target_model and step_counter % target_model_update_interval == 0:
