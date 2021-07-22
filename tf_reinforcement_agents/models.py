@@ -197,11 +197,11 @@ def get_actor_critic2():
                 keras.layers.BatchNormalization(),
                 keras.layers.ReLU()
             ]
-            self._conv_block_last = [
-                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, padding='same'),
-                keras.layers.BatchNormalization(),
-                keras.layers.ReLU()
-            ]
+            # self._conv_block_last = [
+            #     keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, padding='same'),
+            #     keras.layers.BatchNormalization(),
+            #     keras.layers.ReLU()
+            # ]
             self._residual_block = [ResidualUnit(filters, initializer, activation) for _ in range(layers)]
             # self._residual_block = [ResidualUnit(filters, initializer, activation),
             #                         ResidualUnit(filters, initializer, activation),
@@ -222,7 +222,7 @@ def get_actor_critic2():
             for layer in self._conv_block_first:
                 x = layer(x)
 
-            for layer in self._residual_block + self._conv_block_last:
+            for layer in self._residual_block:  #  + self._conv_block_last:
                 x = layer(x)
 
             shape_x = tf.shape(x)

@@ -516,6 +516,7 @@ class Agent(abc.ABC):
 
     def _get_learning_rate(self, data_cnt, batch_cnt, steps):
         self._data_cnt_ema = self._data_cnt_ema * 0.8 + data_cnt / (1e-2 + batch_cnt) * 0.2
+        # print(f"Data count EMA: {self._data_cnt_ema}")
         lr = self._default_lr * self._data_cnt_ema / (1 + steps * 1e-5)
         return lr
 
