@@ -222,7 +222,7 @@ def get_actor_critic2():
             for layer in self._conv_block_first:
                 x = layer(x)
 
-            for layer in self._residual_block:  #  + self._conv_block_last:
+            for layer in self._residual_block:  # + self._conv_block_last:
                 x = layer(x)
 
             shape_x = tf.shape(x)

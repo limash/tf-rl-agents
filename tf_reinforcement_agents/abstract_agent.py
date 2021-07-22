@@ -115,7 +115,124 @@ class Agent(abc.ABC):
 
     def _collect_episode(self, epsilon):
         """
-        Collects an episode trajectory (1 item) to a buffer, so it consist of 200 n_points.
+        Collects an episode trajectory (1 item) to a buffer.
+
+        A buffer contains items, each item consists of several n_points;
+        for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
+        One n_point contains (action, obs, reward, done);
+        action, reward, done are for the current observation (or obs);
+        e.g. action led to the obs, reward prior to the obs, if is it done at the current obs.
+
+        this implementation creates writers for each player (goose) and stores
+        n_points trajectories for all of them
+
+        if epsilon is None assume an off policy gradient method where policy_logits required
+        """
+
+        # initialize writers for all players
+        # writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
+        #            for _ in range(self._n_players)]
+        writers = [[] for _ in range(self._n_players)]
+        ray_writers = [self._replay_memory_client.writer(max_sequence_length=self._n_points)
+                       for _ in range(self._n_players)]
+
+        dones = [False for _ in range(self._n_players)]  # for a first check
+        ready = [False for _ in range(self._n_players)]
+        ready_counter = [0 for _ in range(self._n_players)]
+
+        obs_records = []
+        info = None
+
+        # some constants we are going to use repeatedly
+        action_negative, reward_zero = tf.constant(-1), tf.constant(0.)
+        done_true, done_false = tf.constant(1.), tf.constant(0.)
+        policy_logits_zeros = tf.constant([0., 0., 0., 0.])
+        rewards_saver = [None, None, None, None]
+        obs_zeros = (tf.zeros(self._feature_maps_shape, dtype=tf.uint8),
+                     tf.zeros(self._scalar_features_shape, dtype=tf.uint8))
+
+        obsns = self._train_env.reset()
+        obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
+        for i, writer in enumerate(writers):
+            obs = obsns[i][0], obsns[i][1]
+            obs_records.append(obs)
+            if epsilon is None:
+                writer.append((action_negative, policy_logits_zeros, obs, reward_zero, done_false))
+            else:
+                writer.append((action_negative, obs, reward_zero, done_false))
+        step_counter = 1  # start with 1, since we have at least initialization
+        # steps_per_worker_counter = [1 for _ in range(self._n_players)]
+
+        while not all(ready):
+            if not all(dones):
+                if epsilon is None:
+                    actions, policy_logits = self._policy(obs_records)
+                    policy_logits = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32),
+                                                          policy_logits)
+                else:
+                    actions = self._policy(obs_records, epsilon, info)
+
+                step_counter += 1
+                obsns, rewards, dones, info = self._train_env.step(actions)
+                # environment step receives actions and outputs observations for the dead players also
+                # but it takes no effect
+                actions = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.int32), actions)
+                rewards = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), rewards)
+                dones = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32), dones)
+                obsns = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.uint8), obsns)
+
+            obs_records = []
+            for i, writer in enumerate(writers):
+                if ready_counter[i] == self._n_points - 1:
+                    ready[i] = True
+                    obs_records.append(obs_zeros)
+                    continue
+                action, reward, done = actions[i], rewards[i], dones[i]
+                if done:
+                    ready_counter[i] += 1
+                    # the first 'done' encounter, save a final reward
+                    if rewards_saver[i] is None:
+                        rewards_saver[i] = reward
+                        # steps_per_worker_counter[i] += 1
+                    # consequent 'done' encounters, put zero actions and logits
+                    else:
+                        action = action_negative
+                        if epsilon is None:
+                            policy_logits[i] = policy_logits_zeros
+                    obs = obs_zeros
+                    # if 'done', store final rewards
+                    reward = rewards_saver[i]
+                else:
+                    obs = obsns[i][0], obsns[i][1]
+                    # steps_per_worker_counter[i] += 1
+                obs_records.append(obs)
+                if epsilon is None:
+                    writer.append((action, policy_logits[i], obs, reward, done))
+                else:
+                    writer.append((action, obs, reward, done))  # returns Runtime Error if a writer is closed
+
+        progress = tf.concat([tf.constant([0.]),
+                              tf.linspace(0., 1., step_counter)[:-1],
+                              tf.ones(self._n_points - 2)], axis=0)
+        for i, ray_writer in enumerate(ray_writers):
+            steps = len(writers[i])
+            # progress = tf.concat([tf.constant([0.]),
+            #                       tf.linspace(0., 1., steps_per_worker_counter[i])[:-1],
+            #                       tf.ones(steps - steps_per_worker_counter[i])], axis=0)
+
+            for step in range(steps):
+                action, logits, obs, reward, done = (writers[i][step][0], writers[i][step][1],
+                                                     writers[i][step][2], writers[i][step][3],
+                                                     writers[i][step][4])
+                ray_writer.append((action, logits, obs, reward, done, rewards_saver[i], progress[step]))
+                if step >= self._n_points - 1:
+                    ray_writer.create_item(table=self._table_names[0], num_timesteps=self._n_points, priority=1.)
+
+            ray_writer.close()
+
+    def _collect_episode_legacy(self, epsilon):
+        """
+        Collects an episode trajectory (1 item) to a buffer.
 
         A buffer contains items, each item consists of several n_points;
         for a regular TD update an item should have 2 n_points (a minimum number to form one time step).
