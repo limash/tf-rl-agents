@@ -24,7 +24,7 @@ class Agent(abc.ABC):
         space = self._train_env.observation_space
         self._n_players = len(space)  # number of players (geese)
         # env returns observations for all players, we need shape of any
-        self._feature_maps_shape = space[0][0].shape  # height, width, channels
+        self._feature_maps_shape = space[0][0].shape  # height, width, channels; or layers, vectors
         self._scalar_features_shape = space[0][1].shape
         self._input_shape = (self._feature_maps_shape, self._scalar_features_shape)
 

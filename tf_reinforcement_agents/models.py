@@ -253,32 +253,32 @@ def get_actor_critic2():
             activation = tf.nn.elu
 
             self._conv_block1 = [
-                keras.layers.Conv2D(filters*2, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.Conv2D(filters * 2, 3, kernel_initializer=initializer, use_bias=False),
                 keras.layers.BatchNormalization(),
                 keras.layers.ELU()
             ]
             self._conv_block2 = [
-                keras.layers.Conv2D(filters*3, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.Conv2D(filters * 3, 3, kernel_initializer=initializer, use_bias=False),
                 keras.layers.BatchNormalization(),
                 keras.layers.ELU()
             ]
             self._conv_block3 = [
-                keras.layers.Conv2D(filters*4, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.Conv2D(filters * 4, 3, kernel_initializer=initializer, use_bias=False),
                 keras.layers.BatchNormalization(),
                 keras.layers.ELU()
             ]
             self._conv_block4 = [
-                keras.layers.Conv2D(filters*4, 3, kernel_initializer=initializer, use_bias=False),
+                keras.layers.Conv2D(filters * 4, 3, kernel_initializer=initializer, use_bias=False),
                 keras.layers.BatchNormalization(),
                 keras.layers.ELU()
             ]
-            self._residual_block1 = [ResidualUnit(filters*2, initializer, activation),
-                                     ResidualUnit(filters*2, initializer, activation),
-                                     ResidualUnit(filters*2, initializer, activation),
-                                     ResidualUnit(filters*2, initializer, activation)]
-            self._residual_block2 = [ResidualUnit(filters*3, initializer, activation),
-                                     ResidualUnit(filters*3, initializer, activation)]
-            self._residual_block3 = [ResidualUnit(filters*4, initializer, activation)]
+            self._residual_block1 = [ResidualUnit(filters * 2, initializer, activation),
+                                     ResidualUnit(filters * 2, initializer, activation),
+                                     ResidualUnit(filters * 2, initializer, activation),
+                                     ResidualUnit(filters * 2, initializer, activation)]
+            self._residual_block2 = [ResidualUnit(filters * 3, initializer, activation),
+                                     ResidualUnit(filters * 3, initializer, activation)]
+            self._residual_block3 = [ResidualUnit(filters * 4, initializer, activation)]
 
             self._flatten = keras.layers.Flatten()
             self._dense_block = [
@@ -344,4 +344,24 @@ def get_actor_critic2():
         def get_config(self):
             pass
 
-    return SmallResidualModel()
+    return ResidualModel()
+
+
+def get_actor_critic3():
+    import tensorflow as tf
+    from tensorflow import keras
+
+    class AttentionModel(keras.layers.Layer):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+            self._dense1 = keras.layers.Dense(64)
+
+        def call(self, inputs, **kwargs):
+            vectors, scalars = inputs
+            geese_vectors, food_vector = vectors[:-1, :], vectors[-1:, :]
+            logits = None
+            baseline = None
+            return logits, baseline
+
+    return AttentionModel
