@@ -78,7 +78,7 @@ CONF_CategoricalDQN = {
 
 CONF_ActorCritic = {
     "agent": "actor-critic",
-    "environment": "gym_goose:goose-v4",
+    "environment": "gym_goose:goose-v5",
     "setup": "single",
     "debug": True,
     #
@@ -86,7 +86,7 @@ CONF_ActorCritic = {
     "n_points": 33,  # if full episode, it collects an episode first and then splits it to n_points pieces
     # "buffer": "n_points",
     # "all_trajectories": False,
-    "buffer_size": 3000000,
+    "buffer_size": 5000000,
     "batch_size": 10,
     "init_episodes": 10,  # not required by 'complex' setup
     #

@@ -351,17 +351,173 @@ def get_actor_critic3():
     import tensorflow as tf
     from tensorflow import keras
 
-    class AttentionModel(keras.layers.Layer):
+    K = keras.backend
+
+    # from https://github.com/ageron/handson-ml2
+    class MultiHeadAttention(keras.layers.Layer):
+        def __init__(self, n_heads, causal=False, use_scale=False, **kwargs):
+            self.n_heads = n_heads
+            self.causal = causal
+            self.use_scale = use_scale
+            super().__init__(**kwargs)
+
+        def build(self, batch_input_shape):
+            self.dims = batch_input_shape[0][-1]
+            self.q_dims, self.v_dims, self.k_dims = [self.dims // self.n_heads] * 3  # could be hyperparameters instead
+            self.q_linear = keras.layers.Conv1D(self.n_heads * self.q_dims, kernel_size=1, use_bias=False)
+            self.v_linear = keras.layers.Conv1D(self.n_heads * self.v_dims, kernel_size=1, use_bias=False)
+            self.k_linear = keras.layers.Conv1D(self.n_heads * self.k_dims, kernel_size=1, use_bias=False)
+            self.attention = keras.layers.Attention(causal=self.causal, use_scale=self.use_scale)
+            self.out_linear = keras.layers.Conv1D(self.dims, kernel_size=1, use_bias=False)
+            super().build(batch_input_shape)
+
+        def _multi_head_linear(self, inputs, linear):
+            shape = K.concatenate([K.shape(inputs)[:-1], [self.n_heads, -1]])
+            outputs = linear(inputs)
+            projected = K.reshape(outputs, shape)
+            perm = K.permute_dimensions(projected, [0, 2, 1, 3])
+            return K.reshape(perm, [shape[0] * self.n_heads, shape[1], -1])
+
+        def call(self, inputs):
+            q = inputs[0]
+            v = inputs[1]
+            k = inputs[2] if len(inputs) > 2 else v
+            shape = K.shape(q)
+            q_proj = self._multi_head_linear(q, self.q_linear)
+            v_proj = self._multi_head_linear(v, self.v_linear)
+            k_proj = self._multi_head_linear(k, self.k_linear)
+            multi_attended = self.attention([q_proj, v_proj, k_proj])
+            shape_attended = K.shape(multi_attended)
+            reshaped_attended = K.reshape(multi_attended,
+                                          [shape[0], self.n_heads, shape_attended[1], shape_attended[2]])
+            perm = K.permute_dimensions(reshaped_attended, [0, 2, 1, 3])
+            concat = K.reshape(perm, [shape[0], shape_attended[1], -1])
+            return self.out_linear(concat)
+
+    class AttentionModel(keras.Model):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
-            self._dense1 = keras.layers.Dense(64)
+            initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
 
-        def call(self, inputs, **kwargs):
-            vectors, scalars = inputs
-            geese_vectors, food_vector = vectors[:-1, :], vectors[-1:, :]
-            logits = None
-            baseline = None
+            self._dense0_0 = keras.layers.Dense(64)
+            self._dense0_1 = keras.layers.Dense(64)
+            # self._dense0_2 = keras.layers.Dense(64)
+
+            self._multi_attention1 = MultiHeadAttention(8, use_scale=True)
+            self._norm1_1 = keras.layers.BatchNormalization()
+            self._dense1_1 = keras.layers.Dense(64, activation="relu")
+            self._dense1_2 = keras.layers.Dense(64)
+            self._norm1_2 = keras.layers.BatchNormalization()
+
+            # self._dense_food_1 = keras.layers.Dense(64, activation="relu")
+            # self._dense_food_2 = keras.layers.Dense(64)
+            # self._norm_food = keras.layers.BatchNormalization()
+            self._dense_scalars_1 = keras.layers.Dense(64, activation="relu")
+            self._dense_scalars_2 = keras.layers.Dense(64)
+            self._norm_scalars = keras.layers.BatchNormalization()
+
+            self._multi_attention2 = MultiHeadAttention(8, use_scale=True)
+            self._norm2_1 = keras.layers.BatchNormalization()
+            self._dense2_1 = keras.layers.Dense(64, activation="relu")
+            self._dense2_2 = keras.layers.Dense(64)
+            self._norm2_2 = keras.layers.BatchNormalization()
+
+            self._multi_attention3 = MultiHeadAttention(8, use_scale=True)
+            self._norm3_1 = keras.layers.BatchNormalization()
+            self._dense3_1 = keras.layers.Dense(64, activation="relu")
+            self._dense3_2 = keras.layers.Dense(64)
+            self._norm3_2 = keras.layers.BatchNormalization()
+
+            self._dense4_1 = keras.layers.Dense(128, activation="relu")
+
+            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
+                                                activation=keras.activations.tanh)
+
+        def call(self, inputs):
+            vectors, scalars_raw = inputs
+            vectors = tf.cast(vectors, tf.float32)
+            scalars_raw = tf.cast(scalars_raw, tf.float32)
+            # geese_vectors, food_vector = vectors[:, :-1, :], vectors[:, -1:, :]
+            geese_vectors = vectors
+            geese_numbers = tf.constant([[[0, 0, 1],
+                                          [0, 1, 0],
+                                          [0, 1, 1],
+                                          [1, 0, 0]]], dtype=tf.float32)
+            geese_numbers = tf.tile(geese_numbers, [tf.shape(geese_vectors)[0], 1, 1])
+            geese_vectors = tf.concat([geese_vectors, geese_numbers], 2)
+            # goose1 = geese_vectors
+            # goose2 = tf.stack([geese_vectors[:, 1, :], geese_vectors[:, 2, :], geese_vectors[:, 3, :],
+            #                    geese_vectors[:, 0, :], ], axis=1)
+            # goose3 = tf.stack([geese_vectors[:, 2, :], geese_vectors[:, 3, :], geese_vectors[:, 0, :],
+            #                    geese_vectors[:, 1, :], ], axis=1)
+            # goose4 = tf.stack([geese_vectors[:, 3, :], geese_vectors[:, 0, :], geese_vectors[:, 1, :],
+            #                    geese_vectors[:, 2, :], ], axis=1)
+
+            # geese_raw = tf.stack([goose1, goose2, goose3, goose4], axis=1)
+            geese_raw = geese_vectors
+            # geese_shape, food_shape = tf.shape(geese_raw), tf.shape(food_vector)
+            geese_shape = tf.shape(geese_raw)
+            geese_raw = tf.reshape(geese_raw, [geese_shape[0] * geese_shape[1], -1])
+            # food_raw = tf.reshape(food_vector, [food_shape[0] * food_shape[1], -1])
+
+            geese = self._dense0_0(geese_raw)
+            # food = self._dense0_1(food_raw)
+            scalars = self._dense0_1(scalars_raw)
+            y = geese
+
+            y = tf.reshape(y, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
+            x = self._multi_attention1([y, y])
+            x = x + y
+            x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
+            x = self._norm1_1(x)
+            y = self._dense1_1(x)
+            y = self._dense1_2(y)
+            x = x + y
+            x = self._norm1_2(x)
+
+            # geese = x
+            # food = tf.tile(food, [4, 1])
+            # geese = tf.concat([geese, food], 1)
+            # x = self._dense_food_1(geese)
+            # x = self._dense_food_2(x)
+            # y = self._norm_food(x)
+
+            geese = x
+            scalars = tf.tile(scalars, [4, 1])
+            geese = tf.concat([geese, scalars], 1)
+            x = self._dense_scalars_1(geese)
+            x = self._dense_scalars_2(x)
+            y = self._norm_scalars(x)
+
+            y = tf.reshape(y, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
+            x = self._multi_attention2([y, y])
+            x = x + y
+            x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
+            x = self._norm2_1(x)
+            y = self._dense2_1(x)
+            y = self._dense2_2(y)
+            x = x + y
+            x = self._norm2_2(x)
+
+            y = tf.reshape(y, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
+            x = self._multi_attention3([y, y])
+            x = x + y
+            x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
+            x = self._norm3_1(x)
+            y = self._dense3_1(x)
+            y = self._dense3_2(y)
+            x = x + y
+            x = self._norm3_2(x)
+
+            # x = tf.reshape(x, [geese_shape[0], geese_shape[1], -1])
+            x = tf.reshape(x, [geese_shape[0], -1])
+
+            x = self._dense4_1(x)
+
+            logits = self._logits(x)
+            baseline = self._baseline(x)
             return logits, baseline
 
-    return AttentionModel
+    return AttentionModel()

@@ -43,7 +43,7 @@ class ACAgent(Agent):
             raise LookupError
 
         # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-        self._model = models.get_actor_critic2()
+        self._model = models.get_actor_critic3()
         # continue a model training
         if self._data is not None:
             # launch a model once to define structure
@@ -194,7 +194,8 @@ class ACAgent(Agent):
             # 2: merging time and batch dimensions and applying the model at once, it is fast, but requires gpu memory
             maps_shape = tf.shape(maps)
             scalars_shape = tf.shape(scalars)
-            maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
+            # maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
+            maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3]))
             scalars_merged = tf.reshape(scalars, (-1, scalars_shape[2]))
             logits_merged, values_merged = self._model((maps_merged, scalars_merged))
             logits = tf.reshape(logits_merged, (scalars_shape[0], scalars_shape[1], -1))
