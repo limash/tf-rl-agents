@@ -400,9 +400,9 @@ def get_actor_critic3():
 
             initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
 
-            self._dense0_0 = keras.layers.Dense(64)
+            self._dense0 = keras.layers.Dense(64, activation="relu")
             self._dense0_1 = keras.layers.Dense(64)
-            # self._dense0_2 = keras.layers.Dense(64)
+            # self._norm_0 = keras.layers.BatchNormalization()
 
             self._multi_attention1 = MultiHeadAttention(8, use_scale=True)
             self._norm1_1 = keras.layers.BatchNormalization()
@@ -413,9 +413,9 @@ def get_actor_critic3():
             # self._dense_food_1 = keras.layers.Dense(64, activation="relu")
             # self._dense_food_2 = keras.layers.Dense(64)
             # self._norm_food = keras.layers.BatchNormalization()
-            self._dense_scalars_1 = keras.layers.Dense(64, activation="relu")
-            self._dense_scalars_2 = keras.layers.Dense(64)
-            self._norm_scalars = keras.layers.BatchNormalization()
+            # self._dense_scalars_1 = keras.layers.Dense(64, activation="relu")
+            # self._dense_scalars_2 = keras.layers.Dense(64)
+            # self._norm_scalars = keras.layers.BatchNormalization()
 
             self._multi_attention2 = MultiHeadAttention(8, use_scale=True)
             self._norm2_1 = keras.layers.BatchNormalization()
@@ -429,24 +429,31 @@ def get_actor_critic3():
             self._dense3_2 = keras.layers.Dense(64)
             self._norm3_2 = keras.layers.BatchNormalization()
 
-            self._dense4_1 = keras.layers.Dense(128, activation="relu")
+            # self._dense4_1 = keras.layers.Dense(128, activation="relu")
 
             self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
             self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
                                                 activation=keras.activations.tanh)
 
-        def call(self, inputs):
+        def call(self, inputs, training=False):
             vectors, scalars_raw = inputs
             vectors = tf.cast(vectors, tf.float32)
             scalars_raw = tf.cast(scalars_raw, tf.float32)
+
+            scalars_shape = tf.shape(scalars_raw)
+            scalars_raw = tf.reshape(scalars_raw, [scalars_shape[0], 1, scalars_shape[-1]])
+            scalars = tf.tile(scalars_raw, [1, 4, 1])
+            geese = tf.concat([vectors, scalars], -1)
+
+            # geese = self._norm_0(geese, training=training)
+
             # geese_vectors, food_vector = vectors[:, :-1, :], vectors[:, -1:, :]
-            geese_vectors = vectors
-            geese_numbers = tf.constant([[[0, 0, 1],
-                                          [0, 1, 0],
-                                          [0, 1, 1],
-                                          [1, 0, 0]]], dtype=tf.float32)
-            geese_numbers = tf.tile(geese_numbers, [tf.shape(geese_vectors)[0], 1, 1])
-            geese_vectors = tf.concat([geese_vectors, geese_numbers], 2)
+            # geese_numbers = tf.constant([[[0, 0, 1],
+            #                               [0, 1, 0],
+            #                               [0, 1, 1],
+            #                               [1, 0, 0]]], dtype=tf.float32)
+            # geese_numbers = tf.tile(geese_numbers, [tf.shape(geese_vectors)[0], 1, 1])
+            # geese_vectors = tf.concat([geese_vectors, geese_numbers], 2)
             # goose1 = geese_vectors
             # goose2 = tf.stack([geese_vectors[:, 1, :], geese_vectors[:, 2, :], geese_vectors[:, 3, :],
             #                    geese_vectors[:, 0, :], ], axis=1)
@@ -456,26 +463,27 @@ def get_actor_critic3():
             #                    geese_vectors[:, 2, :], ], axis=1)
 
             # geese_raw = tf.stack([goose1, goose2, goose3, goose4], axis=1)
-            geese_raw = geese_vectors
+            # geese_raw = geese_vectors
             # geese_shape, food_shape = tf.shape(geese_raw), tf.shape(food_vector)
-            geese_shape = tf.shape(geese_raw)
-            geese_raw = tf.reshape(geese_raw, [geese_shape[0] * geese_shape[1], -1])
+            # geese_shape = tf.shape(geese_raw)
             # food_raw = tf.reshape(food_vector, [food_shape[0] * food_shape[1], -1])
 
-            geese = self._dense0_0(geese_raw)
-            # food = self._dense0_1(food_raw)
-            scalars = self._dense0_1(scalars_raw)
-            y = geese
+            geese_shape = tf.shape(geese)
+            y = geese / 200  # 200 is a maximum number can be in observations
+
+            y = tf.reshape(y, [geese_shape[0] * geese_shape[1], -1])
+            y = self._dense0(y)
+            y = self._dense0_1(y)
 
             y = tf.reshape(y, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
             x = self._multi_attention1([y, y])
             x = x + y
             x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
-            x = self._norm1_1(x)
+            x = self._norm1_1(x, training=training)
             y = self._dense1_1(x)
             y = self._dense1_2(y)
             x = x + y
-            x = self._norm1_2(x)
+            x = self._norm1_2(x, training=training)
 
             # geese = x
             # food = tf.tile(food, [4, 1])
@@ -484,37 +492,83 @@ def get_actor_critic3():
             # x = self._dense_food_2(x)
             # y = self._norm_food(x)
 
-            geese = x
-            scalars = tf.tile(scalars, [4, 1])
-            geese = tf.concat([geese, scalars], 1)
-            x = self._dense_scalars_1(geese)
-            x = self._dense_scalars_2(x)
-            y = self._norm_scalars(x)
+            # geese = x
+            # scalars = tf.tile(scalars, [4, 1])
+            # geese = tf.concat([geese, scalars], 1)
+            # x = self._dense_scalars_1(geese)
+            # x = self._dense_scalars_2(x)
+            # y = self._norm_scalars(x, training=training)
 
-            y = tf.reshape(y, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
-            x = self._multi_attention2([y, y])
-            x = x + y
-            x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
-            x = self._norm2_1(x)
-            y = self._dense2_1(x)
-            y = self._dense2_2(y)
-            x = x + y
-            x = self._norm2_2(x)
+            # y = tf.reshape(x, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
+            # x = self._multi_attention2([y, y])
+            # x = x + y
+            # x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
+            # x = self._norm2_1(x, training=training)
+            # y = self._dense2_1(x)
+            # y = self._dense2_2(y)
+            # x = x + y
+            # x = self._norm2_2(x, training=training)
 
-            y = tf.reshape(y, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
-            x = self._multi_attention3([y, y])
-            x = x + y
-            x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
-            x = self._norm3_1(x)
-            y = self._dense3_1(x)
-            y = self._dense3_2(y)
-            x = x + y
-            x = self._norm3_2(x)
+            # y = tf.reshape(x, [geese_shape[0], geese_shape[1], -1])  # [batch, goose, parameters]
+            # x = self._multi_attention3([y, y])
+            # x = x + y
+            # x = tf.reshape(x, [geese_shape[0] * geese_shape[1], -1])
+            # x = self._norm3_1(x, training=training)
+            # y = self._dense3_1(x)
+            # y = self._dense3_2(y)
+            # x = x + y
+            # x = self._norm3_2(x, training=training)
 
             # x = tf.reshape(x, [geese_shape[0], geese_shape[1], -1])
             x = tf.reshape(x, [geese_shape[0], -1])
 
-            x = self._dense4_1(x)
+            # x = self._dense4_1(x)
+
+            logits = self._logits(x)
+            baseline = self._baseline(x)
+            return logits, baseline
+
+    class SimpleModel(keras.Model):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+            initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+
+            self._dense0_0 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            self._dense0_0_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01))
+            self._dense0_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            self._dense0_1_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01))
+            self._activation0 = keras.layers.Activation("relu")
+
+            self._dense1 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            self._dense2 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            self._dense3 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+
+            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
+                                                activation=keras.activations.tanh)
+
+        def call(self, inputs, training=False):
+            vectors, scalars_raw = inputs
+            geese_raw = tf.cast(vectors, tf.float32)
+            scalars_raw = tf.cast(scalars_raw, tf.float32)
+
+            geese_shape = tf.shape(geese_raw)
+            geese_raw = tf.reshape(geese_raw, [geese_shape[0] * geese_shape[1], -1])
+
+            geese = self._dense0_0(geese_raw)
+            geese = self._dense0_0_1(geese)
+            scalars = self._dense0_1(scalars_raw)
+            scalars = self._dense0_1_1(scalars)
+
+            geese = tf.reshape(geese, [geese_shape[0], -1])
+
+            x = tf.concat([geese, scalars], 1)
+            x = self._activation0(x)
+
+            x = self._dense1(x)
+            x = self._dense2(x)
+            x = self._dense3(x)
 
             logits = self._logits(x)
             baseline = self._baseline(x)

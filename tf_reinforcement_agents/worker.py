@@ -26,7 +26,7 @@ class Collector(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2()
+            self._model = models.get_actor_critic3()
             self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)

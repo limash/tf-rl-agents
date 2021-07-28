@@ -38,7 +38,7 @@ class Agent(abc.ABC):
         self._target_model = None
 
         # hyperparameters for optimization
-        self._default_lr = 3e-8
+        self._default_lr = 1e-8
         self._n_points = config["n_points"]
         self._sample_batch_size = config["batch_size"]
         self._data_cnt_ema = self._sample_batch_size * (self._n_points - 1)
