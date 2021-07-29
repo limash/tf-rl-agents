@@ -344,7 +344,7 @@ def get_actor_critic2():
         def get_config(self):
             pass
 
-    return ResidualModel()
+    return SmallResidualModel()
 
 
 def get_actor_critic3():

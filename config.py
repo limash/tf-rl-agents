@@ -78,7 +78,7 @@ CONF_CategoricalDQN = {
 
 CONF_ActorCritic = {
     "agent": "actor-critic",
-    "environment": "gym_goose:goose-v5",
+    "environment": "gym_goose:goose-v4",
     "setup": "complex",
     "debug": False,
     #
@@ -90,7 +90,7 @@ CONF_ActorCritic = {
     "batch_size": 100,
     "init_episodes": 5,  # not required by 'complex' setup
     #
-    "iterations_number": 10000,
+    "iterations_number": 4000,
     "eval_interval": 2000,
     "entropy_c": tf.constant(2.e-3),
     "entropy_c_decay": tf.constant(0.3),
