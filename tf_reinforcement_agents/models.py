@@ -163,17 +163,14 @@ def get_actor_critic2():
 
             self._filters = filters
             self._activation = activation
-            self._main_layers = [
-                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer),  # , use_bias=False),
-                keras.layers.BatchNormalization()
-            ]
+            self._conv = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False)
+            self._norm = keras.layers.BatchNormalization()
 
-        def call(self, inputs, **kwargs):
+        def call(self, inputs, training=False, **kwargs):
             x = inputs
             x = circular_padding(x)
-
-            for layer in self._main_layers:
-                x = layer(x)
+            x = self._conv(x)
+            x = self._norm(x, training=training)
             return self._activation(inputs + x)
 
         def compute_output_shape(self, batch_input_shape):
@@ -192,26 +189,16 @@ def get_actor_critic2():
             initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
             activation = keras.activations.relu
 
-            self._conv_block_first = [
-                keras.layers.Conv2D(filters, 3, kernel_initializer=initializer),
-                keras.layers.BatchNormalization(),
-                keras.layers.ReLU()
-            ]
-            # self._conv_block_last = [
-            #     keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, padding='same'),
-            #     keras.layers.BatchNormalization(),
-            #     keras.layers.ReLU()
-            # ]
+            self._conv = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer)
+            self._norm = keras.layers.BatchNormalization()
+            self._activation = keras.layers.ReLU()
             self._residual_block = [ResidualUnit(filters, initializer, activation) for _ in range(layers)]
-            # self._residual_block = [ResidualUnit(filters, initializer, activation),
-            #                         ResidualUnit(filters, initializer, activation),
-            #                         ResidualUnit(filters, initializer, activation)]
 
             self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
             self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
                                                 activation=keras.activations.tanh)
 
-        def call(self, inputs, training=None, mask=None):
+        def call(self, inputs, training=False, mask=None):
             maps, scalars = inputs
             maps = tf.cast(maps, tf.float32)
             # scalars = tf.cast(scalars, tf.float32)
@@ -219,11 +206,12 @@ def get_actor_critic2():
             x = maps
 
             x = circular_padding(x)
-            for layer in self._conv_block_first:
-                x = layer(x)
+            x = self._conv(x)
+            x = self._norm(x, training=training)
+            x = self._activation(x)
 
-            for layer in self._residual_block:  # + self._conv_block_last:
-                x = layer(x)
+            for layer in self._residual_block:
+                x = layer(x, training=training)
 
             shape_x = tf.shape(x)
             y = tf.reshape(x, (shape_x[0], -1, shape_x[-1]))
