@@ -521,16 +521,21 @@ def get_actor_critic3():
             super().__init__(**kwargs)
 
             initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+            # initializer = keras.initializers.VarianceScaling(
+            #     scale=2.0, mode='fan_in', distribution='truncated_normal')
+            initializer = keras.initializers.HeNormal()
 
-            self._dense0_0 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
-            self._dense0_0_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01))
-            self._dense0_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
-            self._dense0_1_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01))
-            self._activation0 = keras.layers.Activation("relu")
+            # self._dense0_0 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            # self._dense0_0_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01))
+            # self._dense0_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            # self._dense0_1_1 = keras.layers.Dense(100, kernel_regularizer=keras.regularizers.l2(0.01))
+            # self._activation0 = keras.layers.Activation("relu")
 
-            self._dense1 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
-            self._dense2 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
-            self._dense3 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
+            self._dense1 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01),
+                                              kernel_initializer=initializer, activation="relu")
+            self._dense2 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01),
+                                              kernel_initializer=initializer, activation="relu")
+            # self._dense3 = keras.layers.Dense(500, kernel_regularizer=keras.regularizers.l2(0.01), activation="relu")
 
             self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
             self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
@@ -542,24 +547,24 @@ def get_actor_critic3():
             scalars_raw = tf.cast(scalars_raw, tf.float32)
 
             geese_shape = tf.shape(geese_raw)
-            geese_raw = tf.reshape(geese_raw, [geese_shape[0] * geese_shape[1], -1])
+            # geese_raw = tf.reshape(geese_raw, [geese_shape[0] * geese_shape[1], -1])
 
-            geese = self._dense0_0(geese_raw)
-            geese = self._dense0_0_1(geese)
-            scalars = self._dense0_1(scalars_raw)
-            scalars = self._dense0_1_1(scalars)
+            # geese = self._dense0_0(geese_raw)
+            # geese = self._dense0_0_1(geese)
+            # scalars = self._dense0_1(scalars_raw)
+            # scalars = self._dense0_1_1(scalars)
 
-            geese = tf.reshape(geese, [geese_shape[0], -1])
+            geese = tf.reshape(geese_raw, [geese_shape[0], -1])
 
-            x = tf.concat([geese, scalars], 1)
-            x = self._activation0(x)
+            x = tf.concat([scalars_raw, geese], 1)
+            # x = self._activation0(x)
 
             x = self._dense1(x)
             x = self._dense2(x)
-            x = self._dense3(x)
+            # x = self._dense3(x)
 
             logits = self._logits(x)
             baseline = self._baseline(x)
             return logits, baseline
 
-    return AttentionModel()
+    return SimpleModel()
