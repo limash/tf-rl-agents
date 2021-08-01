@@ -677,8 +677,8 @@ class Agent(abc.ABC):
         mask = None
         rewards = 0
         steps = 0
-        interval = 100
-        update_interval = interval / 4
+        print_interval = 100
+        update_interval = print_interval / 4
         eval_counter = 0
         data_counter = 0
 
@@ -718,8 +718,8 @@ class Agent(abc.ABC):
                     weights = self._model.get_weights()
                     self._ray_queue.put(weights)  # send weights to the interprocess ray queue
 
-            if step_counter % interval == 0:
-                lr = self._get_learning_rate(data_counter, interval, step_counter)
+            if step_counter % print_interval == 0:
+                lr = self._get_learning_rate(data_counter, print_interval, step_counter)
                 self._optimizer.learning_rate.assign(lr)
                 # lr = self._optimizer.learning_rate.numpy()
                 data_counter = 0
@@ -735,9 +735,9 @@ class Agent(abc.ABC):
                 # fraction = [x / y if x != 0 else 1.e-9 for x, y in zip(self._items_sampled, items_created)]
                 per_step_items_created = items_created[-1] - items_prev[-1]
                 if per_step_items_created == 0:
-                    step_fraction = self._sample_batch_size * interval
+                    step_fraction = self._sample_batch_size * print_interval
                 else:
-                    step_fraction = self._sample_batch_size * interval / per_step_items_created
+                    step_fraction = self._sample_batch_size * print_interval / per_step_items_created
 
                 print(f"Step: {step_counter}, Sampled: {self._items_sampled[0]}, "
                       f"Created total: {items_created[0]}, "

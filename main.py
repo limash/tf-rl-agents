@@ -127,7 +127,11 @@ def complex_call(env_name, agent_name, data, checkpoint, plot=False):
     num_collectors = config["collectors"]
     parallel_calls = num_trainers + num_collectors
 
-    ray.init(num_cpus=parallel_calls, num_gpus=1)
+    is_gpu = bool(tf.config.list_physical_devices('GPU'))
+    if is_gpu:
+        ray.init(num_cpus=parallel_calls, num_gpus=1)
+    else:
+        ray.init(num_cpus=parallel_calls)
     queue = Queue(maxsize=100)  # interprocess queue to store recent model weights
     # ray.init(local_mode=True)  # for debugging
     # queue = None  # queue does not work in debug mode
@@ -151,7 +155,10 @@ def complex_call(env_name, agent_name, data, checkpoint, plot=False):
 
     agent_object = AGENTS[agent_name]
 
-    trainer_objects = [ray.remote(num_gpus=1/num_trainers)(agent_object) for _ in range(num_trainers)]
+    if is_gpu:
+        trainer_objects = [ray.remote(num_gpus=1/num_trainers)(agent_object) for _ in range(num_trainers)]
+    else:
+        trainer_objects = [ray.remote(agent_object) for _ in range(num_trainers)]
     worker_objects = [ray.remote(worker.Collector) for _ in range(num_collectors)]
     # objects = trainer_objects + worker_objects
 

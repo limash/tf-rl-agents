@@ -558,6 +558,7 @@ def get_actor_critic3():
 
             x = tf.concat([scalars_raw, geese], 1)
             # x = self._activation0(x)
+            x = x / 200
 
             x = self._dense1(x)
             x = self._dense2(x)
