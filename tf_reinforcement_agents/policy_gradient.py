@@ -43,7 +43,7 @@ class ACAgent(Agent):
             raise LookupError
 
         # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-        self._model = models.get_actor_critic3()
+        self._model = models.get_actor_critic2()
         # continue a model training
         if self._data is not None:
             # launch a model once to define structure
@@ -59,18 +59,21 @@ class ACAgent(Agent):
             self._training_step_full = tf.function(self._training_step_full)
 
         if config["setup"] != "complex":  # in a complex setup workers will gather experience
-            self._collect_several_episodes(config["init_episodes"])
+            self._collect_several_episodes(config["init_episodes"], is_random=True)
 
         reward, steps = self._evaluate_episodes(num_episodes=10)
         print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
 
-    def _policy(self, obsns):
+    def _policy(self, obsns, is_random=False):
         actions = []
         logits = []
         obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obsns)
         for i in range(self._n_players):
             obs = obsns[i]
-            policy_logits, _ = self._predict(obs)
+            if is_random:
+                policy_logits = tf.zeros([tf.shape(obs[0])[0], self._n_outputs])
+            else:
+                policy_logits, _ = self._predict(obs)
             action = tf.random.categorical(policy_logits, num_samples=1, dtype=tf.int32)
             actions.append(action.numpy()[0][0])
             logits.append(policy_logits.numpy()[0])
@@ -197,8 +200,8 @@ class ACAgent(Agent):
             # 2: merging time and batch dimensions and applying the model at once, it is fast, but requires gpu memory
             maps_shape = tf.shape(maps)
             scalars_shape = tf.shape(scalars)
-            # maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
-            maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3]))
+            maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3], maps_shape[4]))
+            # maps_merged = tf.reshape(maps, (-1, maps_shape[2], maps_shape[3]))
             scalars_merged = tf.reshape(scalars, (-1, scalars_shape[2]))
             logits_merged, values_merged = self._model((maps_merged, scalars_merged), training=True)
             logits = tf.reshape(logits_merged, (scalars_shape[0], scalars_shape[1], -1))

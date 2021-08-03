@@ -113,7 +113,7 @@ class Agent(abc.ABC):
             steps += step
         return episode_rewards / num_episodes, steps / num_episodes
 
-    def _collect_episode(self, epsilon):
+    def _collect_episode(self, epsilon, is_random=False):
         """
         Collects an episode trajectory (1 item) to a buffer.
 
@@ -166,7 +166,7 @@ class Agent(abc.ABC):
         while not all(ready):
             if not all(dones):
                 if epsilon is None:
-                    actions, policy_logits = self._policy(obs_records)
+                    actions, policy_logits = self._policy(obs_records, is_random)
                     policy_logits = tf.nest.map_structure(lambda x: tf.convert_to_tensor(x, dtype=tf.float32),
                                                           policy_logits)
                 else:
@@ -574,9 +574,9 @@ class Agent(abc.ABC):
             if all(dones):
                 break
 
-    def _collect_several_episodes(self, n_episodes, epsilon=None):
+    def _collect_several_episodes(self, n_episodes, epsilon=None, is_random=False):
         for i in range(n_episodes):
-            self._collect(epsilon)
+            self._collect(epsilon, is_random)
 
     # def _collect_until_items_created(self, n_items, epsilon=None):
     #     # collect more exp if we do not have enough for a batch
@@ -678,7 +678,7 @@ class Agent(abc.ABC):
         rewards = 0
         steps = 0
         print_interval = 100
-        update_interval = print_interval / 4
+        update_interval = print_interval
         eval_counter = 0
         data_counter = 0
 
@@ -717,6 +717,7 @@ class Agent(abc.ABC):
                 if not self._ray_queue.full():
                     weights = self._model.get_weights()
                     self._ray_queue.put(weights)  # send weights to the interprocess ray queue
+                    # print("Put weights in queue.")
 
             if step_counter % print_interval == 0:
                 lr = self._get_learning_rate(data_counter, print_interval, step_counter)
@@ -815,8 +816,9 @@ class Agent(abc.ABC):
         rewards = 0
         steps = 0
         eval_counter = 0
-        interval = 10
+        print_interval = 10
         data_counter = 0
+        is_random = True
 
         items_created = []
         for table_name in self._table_names:
@@ -848,12 +850,14 @@ class Agent(abc.ABC):
             # if fraction[-1] > 10:
             epsilon = epsilon_fn(step_counter) if epsilon_fn is not None else None
             # t1 = time.time()
-            self._collect(epsilon)
+            if step_counter > 10:
+                is_random = False
+            self._collect(epsilon, is_random)
             # t2 = time.time()
             # print(f"Collecting. Step: {step_counter} Time: {t2-t1}")
 
-            if step_counter % interval == 0:
-                lr = self._get_learning_rate(data_counter, interval, step_counter)
+            if step_counter % print_interval == 0:
+                lr = self._get_learning_rate(data_counter, print_interval, step_counter)
                 self._optimizer.learning_rate.assign(lr)
                 data_counter = 0
 
@@ -866,9 +870,9 @@ class Agent(abc.ABC):
 
                 per_step_items_created = items_created[-1] - items_prev[-1]
                 if per_step_items_created == 0:
-                    step_fraction = self._sample_batch_size * interval
+                    step_fraction = self._sample_batch_size * print_interval
                 else:
-                    step_fraction = self._sample_batch_size * interval / per_step_items_created
+                    step_fraction = self._sample_batch_size * print_interval / per_step_items_created
 
                 print(f"Step: {step_counter}, Sampled current epoch: {self._items_sampled[0]}, "
                       f"Created total: {items_created[0]}, "

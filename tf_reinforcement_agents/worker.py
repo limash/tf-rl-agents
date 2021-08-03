@@ -26,17 +26,17 @@ class Collector(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic3()
+            self._model = models.get_actor_critic2()
             self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
             self._policy = self._dqn_policy
 
+        dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
+                       tf.ones(self._input_shape[1], dtype=tf.uint8))
+        dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
+        self._predict(dummy_input)
         if self._data is not None:
-            dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
-                           tf.ones(self._input_shape[1], dtype=tf.uint8))
-            dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
-            self._predict(dummy_input)
             self._model.set_weights(self._data['weights'])
 
     def _dqn_policy(self, obsns, epsilon, info):
@@ -59,13 +59,16 @@ class Collector(Agent, ABC):
                 best_actions.append(np.argmax(Q_values[0]))
             return best_actions
 
-    def _pg_policy(self, obsns):
+    def _pg_policy(self, obsns, is_random=False):
         actions = []
         logits = []
         obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obsns)
         for i in range(self._n_players):
             obs = obsns[i]
-            policy_logits, _ = self._predict(obs)
+            if is_random:
+                policy_logits = tf.zeros([tf.shape(obs[0])[0], self._n_outputs])
+            else:
+                policy_logits, _ = self._predict(obs)
             action = tf.random.categorical(policy_logits, num_samples=1, dtype=tf.int32)
             actions.append(action.numpy()[0][0])
             logits.append(policy_logits.numpy()[0])
@@ -116,7 +119,13 @@ class Collector(Agent, ABC):
 
             epsilon = None
             # t1 = time.time()
-            self._collect(epsilon)
             num_collects += 1
+            if num_collects < 1000 or num_collects % 100 == 0:
+                self._collect(epsilon, is_random=True)
+                # print("Episode with a random trajectory was collected; "
+                #       f"Num of collects: {num_collects}")
+            else:
+                self._collect(epsilon)
+                # print(f"Num of collects: {num_collects}")
             # t2 = time.time()
             # print(f"Collecting. Time: {t2 - t1}")
