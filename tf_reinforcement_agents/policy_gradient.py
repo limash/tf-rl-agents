@@ -61,8 +61,8 @@ class ACAgent(Agent):
         if config["setup"] != "complex":  # in a complex setup workers will gather experience
             self._collect_several_episodes(config["init_episodes"], is_random=True)
 
-        reward, steps = self._evaluate_episodes(num_episodes=10)
-        print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
+        # reward, steps = self._evaluate_episodes(num_episodes=10)
+        # print(f"Initial reward with a model policy is {reward:.2f}, steps: {steps:.2f}")
 
     def _policy(self, obsns, is_random=False):
         actions = []

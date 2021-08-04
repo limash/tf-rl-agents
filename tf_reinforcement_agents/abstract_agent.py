@@ -665,7 +665,7 @@ class Agent(abc.ABC):
                     else:
                         self._training_step(*experiences, steps=i + 2, info=info)
 
-    def do_train(self, iterations_number=20000, eval_interval=2000):
+    def do_train(self, iterations_number=20000, save_interval=2000):
 
         target_model_update_interval = 3000
         epsilon_fn = tf.keras.optimizers.schedules.PolynomialDecay(
@@ -675,11 +675,11 @@ class Agent(abc.ABC):
 
         weights = None
         mask = None
-        rewards = 0
-        steps = 0
+        # rewards = 0
+        # steps = 0
         print_interval = 100
         update_interval = print_interval
-        eval_counter = 0
+        # eval_counter = 0
         data_counter = 0
 
         lr = self._default_lr * self._data_cnt_ema
@@ -699,6 +699,9 @@ class Agent(abc.ABC):
                 continue
             else:
                 break
+
+        weights = self._model.get_weights()
+        ray.get(self._workers_info.set_current_weights.remote((weights, 0)))
 
         # the main training loop
         for step_counter in range(1, iterations_number + 1):
@@ -746,19 +749,20 @@ class Agent(abc.ABC):
                       f"LR: {lr:.2e}")
 
             # evaluation
-            if step_counter % eval_interval == 0:
-                eval_counter += 1
-                epsilon = 0 if epsilon_fn is not None else None
-                mean_episode_reward, mean_steps = self._evaluate_episodes(epsilon=epsilon)
-                print("----Evaluation------------------")
-                print(f"Iteration:{step_counter:.2f}; "
-                      f"Reward: {mean_episode_reward:.2f}; "
-                      f"Steps: {mean_steps:.2f}")
-                print("--------------------------------")
-                rewards += mean_episode_reward
-                steps += mean_steps
+            if step_counter % save_interval == 0:
+                # eval_counter += 1
+                # epsilon = 0 if epsilon_fn is not None else None
+                # mean_episode_reward, mean_steps = self._evaluate_episodes(epsilon=epsilon)
+                # print("----Evaluation------------------")
+                # print(f"Iteration:{step_counter:.2f}; "
+                #       f"Reward: {mean_episode_reward:.2f}; "
+                #       f"Steps: {mean_steps:.2f}")
+                # print("--------------------------------")
+                # rewards += mean_episode_reward
+                # steps += mean_steps
 
                 weights = self._model.get_weights()
+                ray.get(self._workers_info.set_current_weights.remote((weights, step_counter)))
                 data = {
                     'weights': weights,
                 }
@@ -772,16 +776,16 @@ class Agent(abc.ABC):
 
             # store weights at the last step
             if step_counter % iterations_number == 0:
-                print("----Final-results---------------")
-                epsilon = 0 if epsilon_fn is not None else None
-                mean_episode_reward, mean_steps = self._evaluate_episodes(num_episodes=10, epsilon=epsilon)
-                print(f"Final reward with a model policy is {mean_episode_reward:.2f}; "
-                      f"Final average steps survived is {mean_steps:.2f}")
-                output_reward = rewards / eval_counter
-                output_steps = steps / eval_counter
-                print(f"Average episode reward with a model policy is {output_reward:.2f}; "
-                      f"Final average per episode steps survived is {output_steps:.2f}")
-                print("--------------------------------")
+                # print("----Final-results---------------")
+                # epsilon = 0 if epsilon_fn is not None else None
+                # mean_episode_reward, mean_steps = self._evaluate_episodes(num_episodes=10, epsilon=epsilon)
+                # print(f"Final reward with a model policy is {mean_episode_reward:.2f}; "
+                #       f"Final average steps survived is {mean_steps:.2f}")
+                # output_reward = rewards / eval_counter
+                # output_steps = steps / eval_counter
+                # print(f"Average episode reward with a model policy is {output_reward:.2f}; "
+                #       f"Final average per episode steps survived is {output_steps:.2f}")
+                # print("--------------------------------")
 
                 weights = self._model.get_weights()
                 mask = list(map(lambda x: np.where(np.abs(x) < 0.1, 0., 1.), weights))
@@ -801,7 +805,7 @@ class Agent(abc.ABC):
 
                 break
 
-        return weights, mask, output_reward, output_steps, checkpoint
+        return weights, mask, checkpoint
 
     def do_train_collect(self, iterations_number=20000, eval_interval=2000):
 

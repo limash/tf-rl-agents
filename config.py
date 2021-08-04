@@ -92,8 +92,8 @@ CONF_ActorCritic = {
     "batch_size": 100,
     "init_episodes": 25,  # not required by 'complex' setup
     #
-    "iterations_number": 50000,
-    "eval_interval": 5000,
+    "iterations_number": 2000,
+    "save_interval": 1000,
     "entropy_c": tf.constant(2.e-3),
     "entropy_c_decay": tf.constant(0.3),
     # "optimizer": tf.keras.optimizers.Adam(lr=1.e-6),

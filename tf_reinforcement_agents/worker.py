@@ -1,5 +1,7 @@
 import random
+import pickle
 # import time
+import time
 from abc import ABC
 
 import tensorflow as tf
@@ -84,7 +86,7 @@ class Collector(Agent, ABC):
             # trainer will switch to done on the last iteration
             is_done = ray.get(self._workers_info.get_done.remote())
             if is_done:
-                # print("Collecting done")
+                # print("Collecting is done.")
                 return num_collects, num_updates
             # get the current turn, so collectors (workers) update weights one by one
             curr_worker = ray.get(self._workers_info.get_global_v.remote())
@@ -129,3 +131,84 @@ class Collector(Agent, ABC):
                 # print(f"Num of collects: {num_collects}")
             # t2 = time.time()
             # print(f"Collecting. Time: {t2 - t1}")
+
+
+class Evaluator(Agent, ABC):
+
+    def __init__(self, env_name, config,
+                 buffer_table_names, buffer_server_port,
+                 *args, **kwargs):
+        super().__init__(env_name, config,
+                         buffer_table_names, buffer_server_port,
+                         *args, **kwargs)
+
+        if self._is_policy_gradient:
+            # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
+            self._model = models.get_actor_critic2()
+            self._eval_model = models.get_actor_critic2()
+            # self._policy = self._pg_policy
+        else:
+            self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
+            # self._policy = self._dqn_policy
+
+        dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
+                       tf.ones(self._input_shape[1], dtype=tf.uint8))
+        dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
+        self._predict(dummy_input)
+        self._eval_predict(dummy_input)
+
+        with open('data/eval/data.pickle', 'rb') as file:
+            data = pickle.load(file)
+        self._eval_model.set_weights(data['weights'])
+
+    @tf.function
+    def _eval_predict(self, observation):
+        return self._eval_model(observation)
+
+    def evaluate_episode(self):
+        obs_records = self._eval_env.reset()
+        obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obs_records)
+        rewards_storage = np.zeros(self._n_players)
+        while True:
+            actions = []
+            for i in range(self._n_players):
+                # policy_logits, _ = self._predict(obsns[i]) if i < 2 else self._eval_predict(obsns[i])
+                policy_logits, _ = self._eval_predict(obsns[i]) if i < 2 else self._predict(obsns[i])
+                action = tf.random.categorical(policy_logits, num_samples=1, dtype=tf.int32)
+                actions.append(action.numpy()[0][0])
+
+            obs_records, rewards, dones, info = self._eval_env.step(actions)
+            rewards_storage += np.asarray(rewards)
+            if all(dones):
+                break
+        winner = rewards_storage.argmax()
+        return rewards_storage, winner
+
+    def evaluate_episodes(self):
+        wins = 0
+        total_rewards = np.zeros(self._n_players)
+        for _ in range(100):
+            rewards, winner = self.evaluate_episode()
+            # if winner == 0 or winner == 1:
+            if winner == 2 or winner == 3:
+                wins += 1
+            total_rewards += rewards
+        return total_rewards, wins
+
+    def do_evaluate(self):
+        while True:
+            is_done = ray.get(self._workers_info.get_done.remote())
+            if is_done:
+                # print("Evaluation is done.")
+                time.sleep(1)  # is needed to have time to print the last 'total wins'
+                return 'Done'
+            while True:
+                weights, step = ray.get(self._workers_info.get_current_weights.remote())
+                if weights is None:
+                    time.sleep(1)
+                else:
+                    self._model.set_weights(weights)
+                    break
+
+            total_rewards, wins = self.evaluate_episodes()
+            print(f"Total rewards: {total_rewards}; Total wins: {wins}; Time step: {step}")
