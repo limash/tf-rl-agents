@@ -1,7 +1,7 @@
 import random
 import pickle
-# import time
 import time
+import itertools as it
 from abc import ABC
 
 import tensorflow as tf
@@ -122,13 +122,20 @@ class Collector(Agent, ABC):
             epsilon = None
             # t1 = time.time()
             num_collects += 1
-            if num_collects < 1000 or num_collects % 100 == 0:
-                self._collect(epsilon, is_random=True)
-                # print("Episode with a random trajectory was collected; "
-                #       f"Num of collects: {num_collects}")
+            if self._data is not None:
+                if num_collects % 50 == 0:
+                    self._collect(epsilon, is_random=True)
+                    # print("Episode with a random trajectory was collected; "
+                    #       f"Num of collects: {num_collects}")
+                else:
+                    self._collect(epsilon)
+                    # print(f"Num of collects: {num_collects}")
             else:
-                self._collect(epsilon)
-                # print(f"Num of collects: {num_collects}")
+                if num_collects < 1000 or num_collects % 50 == 0:
+                    self._collect(epsilon, is_random=True)
+                else:
+                    self._collect(epsilon)
+            # print(f"Num of collects: {num_collects}")
             # t2 = time.time()
             # print(f"Collecting. Time: {t2 - t1}")
 
@@ -160,6 +167,7 @@ class Evaluator(Agent, ABC):
         with open('data/eval/data.pickle', 'rb') as file:
             data = pickle.load(file)
         self._eval_model.set_weights(data['weights'])
+        # self._model.set_weights(data['weights'])
 
     @tf.function
     def _eval_predict(self, observation):
@@ -167,13 +175,18 @@ class Evaluator(Agent, ABC):
 
     def evaluate_episode(self):
         obs_records = self._eval_env.reset()
-        obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obs_records)
         rewards_storage = np.zeros(self._n_players)
-        while True:
+        for step in it.count(0):
             actions = []
+            obsns = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), obs_records)
             for i in range(self._n_players):
-                # policy_logits, _ = self._predict(obsns[i]) if i < 2 else self._eval_predict(obsns[i])
-                policy_logits, _ = self._eval_predict(obsns[i]) if i < 2 else self._predict(obsns[i])
+                policy_logits, _ = self._predict(obsns[i]) if i < 2 else self._eval_predict(obsns[i])
+                # policy_logits, _ = self._eval_predict(obsns[i]) if i < 2 else self._predict(obsns[i])
+                # if i < 2:
+                #     policy_logits, _ = self._predict(obsns[i])
+                # else:
+                #     policy_logits, _ = self._eval_predict(obsns[i])
+
                 action = tf.random.categorical(policy_logits, num_samples=1, dtype=tf.int32)
                 actions.append(action.numpy()[0][0])
 
@@ -181,19 +194,23 @@ class Evaluator(Agent, ABC):
             rewards_storage += np.asarray(rewards)
             if all(dones):
                 break
-        winner = rewards_storage.argmax()
-        return rewards_storage, winner
+        # winner = rewards_storage.argmax()
+        winners = np.argwhere(rewards_storage == np.amax(rewards_storage))
+        return winners
 
     def evaluate_episodes(self):
         wins = 0
-        total_rewards = np.zeros(self._n_players)
+        losses = 0
+        draws = 0
         for _ in range(100):
-            rewards, winner = self.evaluate_episode()
-            # if winner == 0 or winner == 1:
-            if winner == 2 or winner == 3:
+            winners = self.evaluate_episode()
+            if (0 in winners or 1 in winners) and 2 not in winners and 3 not in winners:
                 wins += 1
-            total_rewards += rewards
-        return total_rewards, wins
+            elif (2 in winners or 3 in winners) and 0 not in winners and 1 not in winners:
+                losses += 1
+            else:
+                draws += 1
+        return wins, losses, draws
 
     def do_evaluate(self):
         while True:
@@ -210,5 +227,5 @@ class Evaluator(Agent, ABC):
                     self._model.set_weights(weights)
                     break
 
-            total_rewards, wins = self.evaluate_episodes()
-            print(f"Total rewards: {total_rewards}; Total wins: {wins}; Time step: {step}")
+            wins, losses, draws = self.evaluate_episodes()
+            print(f"Wins: {wins}; Losses: {losses}; Draws: {draws}; Model from a step: {step}")

@@ -39,7 +39,7 @@ def one_call(env_name, agent_name, data, checkpoint):
                          buffer.table_names, buffer.server_port,
                          data, make_checkpoint=True)
     weights, mask, reward, steps, checkpoint = agent.do_train_collect(iterations_number=config["iterations_number"],
-                                                                      eval_interval=config["eval_interval"])
+                                                                      eval_interval=config["save_interval"])
 
     data = {
         'weights': weights,
@@ -166,6 +166,10 @@ def complex_call(env_name, agent_name, data, checkpoint, plot=False):
     # global variable to control getting items order from the interprocess queue, a done condition
     # store weight for an evaluator
     workers_info = misc.GlobalVarActor.remote()
+
+    # eval = worker.Evaluator(env_name, config, buffer.table_names, buffer.server_port,
+    #                         workers_info=workers_info)
+    # _, wins = eval.evaluate_episodes()
 
     # initialization
     trainer_agents = []
