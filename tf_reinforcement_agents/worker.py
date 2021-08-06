@@ -28,7 +28,7 @@ class Collector(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2()
+            self._model = models.get_actor_critic3()
             self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
@@ -121,7 +121,6 @@ class Collector(Agent, ABC):
 
             epsilon = None
             # t1 = time.time()
-            num_collects += 1
             if self._data is not None:
                 if num_collects % 50 == 0:
                     self._collect(epsilon, is_random=True)
@@ -132,9 +131,12 @@ class Collector(Agent, ABC):
                     # print(f"Num of collects: {num_collects}")
             else:
                 if num_collects < 1000 or num_collects % 50 == 0:
+                    if num_collects == 999:
+                        print("Collector: The last initial random collect.")
                     self._collect(epsilon, is_random=True)
                 else:
                     self._collect(epsilon)
+            num_collects += 1
             # print(f"Num of collects: {num_collects}")
             # t2 = time.time()
             # print(f"Collecting. Time: {t2 - t1}")
@@ -151,8 +153,8 @@ class Evaluator(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2()
-            self._eval_model = models.get_actor_critic2()
+            self._model = models.get_actor_critic3()
+            self._eval_model = models.get_actor_critic3()
             # self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
@@ -164,10 +166,13 @@ class Evaluator(Agent, ABC):
         self._predict(dummy_input)
         self._eval_predict(dummy_input)
 
-        with open('data/eval/data.pickle', 'rb') as file:
-            data = pickle.load(file)
-        self._eval_model.set_weights(data['weights'])
-        # self._model.set_weights(data['weights'])
+        try:
+            with open('data/eval/data.pickle', 'rb') as file:
+                data = pickle.load(file)
+            self._eval_model.set_weights(data['weights'])
+            # self._model.set_weights(data['weights'])
+        except FileNotFoundError:
+            pass
 
     @tf.function
     def _eval_predict(self, observation):
@@ -228,4 +233,4 @@ class Evaluator(Agent, ABC):
                     break
 
             wins, losses, draws = self.evaluate_episodes()
-            print(f"Wins: {wins}; Losses: {losses}; Draws: {draws}; Model from a step: {step}")
+            print(f"Evaluator: Wins: {wins}; Losses: {losses}; Draws: {draws}; Model from a step: {step}")
