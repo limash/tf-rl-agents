@@ -152,10 +152,65 @@ def get_actor_critic2():
     # if len(physical_devices) > 0:
     #     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
+    def center_map(x):
+        center = (3, 5)  # row, column
+        try:
+            head_coords = tf.where(x[:, :, :, 0] == 1)
+            row_shift = center[0] - head_coords[:, 1]
+            column_shift = center[1] - head_coords[:, 2]
+            B1 = tf.roll(x, row_shift, axis=[1, ])
+            B2 = tf.roll(B1, column_shift, axis=[2, ])
+        except IndexError:  # if the goose is dead
+            B2 = x
+
+        return B2
+
     def circular_padding(x):
         x = tf.concat([x[:, -1:, :, :], x, x[:, :1, :, :]], 1)
         x = tf.concat([x[:, :, -1:, :], x, x[:, :, :1, :]], 2)
         return x
+    K = keras.backend
+
+    # from https://github.com/ageron/handson-ml2
+    class MultiHeadAttention(keras.layers.Layer):
+        def __init__(self, n_heads, causal=False, use_scale=False, **kwargs):
+            self.n_heads = n_heads
+            self.causal = causal
+            self.use_scale = use_scale
+            super().__init__(**kwargs)
+
+        def build(self, batch_input_shape):
+            self.dims = batch_input_shape[0][-1]
+            self.q_dims, self.v_dims, self.k_dims = [self.dims // self.n_heads] * 3  # could be hyperparameters instead
+            self.q_linear = keras.layers.Conv1D(self.n_heads * self.q_dims, kernel_size=1, use_bias=False)
+            self.v_linear = keras.layers.Conv1D(self.n_heads * self.v_dims, kernel_size=1, use_bias=False)
+            self.k_linear = keras.layers.Conv1D(self.n_heads * self.k_dims, kernel_size=1, use_bias=False)
+            self.attention = keras.layers.Attention(causal=self.causal, use_scale=self.use_scale)
+            self.out_linear = keras.layers.Conv1D(self.dims, kernel_size=1, use_bias=False)
+            super().build(batch_input_shape)
+
+        def _multi_head_linear(self, inputs, linear):
+            shape = K.concatenate([K.shape(inputs)[:-1], [self.n_heads, -1]])
+            outputs = linear(inputs)
+            projected = K.reshape(outputs, shape)
+            perm = K.permute_dimensions(projected, [0, 2, 1, 3])
+            return K.reshape(perm, [shape[0] * self.n_heads, shape[1], -1])
+
+        def call(self, inputs):
+            q = inputs[0]
+            v = inputs[1]
+            k = inputs[2] if len(inputs) > 2 else v
+            shape = K.shape(q)
+            q_proj = self._multi_head_linear(q, self.q_linear)
+            v_proj = self._multi_head_linear(v, self.v_linear)
+            k_proj = self._multi_head_linear(k, self.k_linear)
+            multi_attended = self.attention([q_proj, v_proj, k_proj])
+            shape_attended = K.shape(multi_attended)
+            reshaped_attended = K.reshape(multi_attended,
+                                          [shape[0], self.n_heads, shape_attended[1], shape_attended[2]])
+            perm = K.permute_dimensions(reshaped_attended, [0, 2, 1, 3])
+            concat = K.reshape(perm, [shape[0], shape_attended[1], -1])
+            return self.out_linear(concat)
 
     class ResidualUnit(keras.layers.Layer):
         def __init__(self, filters, initializer, activation, **kwargs):
@@ -176,6 +231,93 @@ def get_actor_critic2():
         def compute_output_shape(self, batch_input_shape):
             batch, x, y, _ = batch_input_shape
             return [batch, x, y, self._filters]
+
+    class ResidualBase(keras.layers.Layer):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+            filters = 32
+            layers = 12
+
+            # initializer = keras.initializers.HeNormal
+            initializer = keras.initializers.VarianceScaling(scale=2.0, mode='fan_in', distribution='truncated_normal')
+            # initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+            activation = keras.activations.relu
+
+            self._conv = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer)
+            self._norm = keras.layers.BatchNormalization()
+            self._activation = keras.layers.ReLU()
+            self._residual_block = [ResidualUnit(filters, initializer, activation) for _ in range(layers)]
+
+        def call(self, inputs, training=False, mask=None):
+            # maps = tf.cast(inputs, tf.float32)
+
+            x = inputs
+
+            x = circular_padding(x)
+            x = self._conv(x)
+            x = self._norm(x, training=training)
+            x = self._activation(x)
+
+            for layer in self._residual_block:
+                x = layer(x, training=training)
+
+            shape_x = tf.shape(x)
+            y = tf.reshape(x, (shape_x[0], -1, shape_x[-1]))
+            y = tf.reduce_mean(y, axis=1)
+
+            z = (x * inputs[:, :, :, :1])
+            shape_z = tf.shape(z)
+            z = tf.reshape(z, (shape_z[0], -1, shape_z[-1]))
+            z = tf.reduce_sum(z, axis=1)
+
+            result = tf.concat([y, z], axis=1)
+            # return y, z
+            return result
+
+        def get_config(self):
+            pass
+
+    class ExpModel(keras.Model):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+            initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
+
+            self._residual = ResidualBase()
+
+            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
+                                                activation=keras.activations.tanh)
+
+        def call(self, inputs, training=False, mask=None):
+            maps, scalars = inputs
+            maps = tf.cast(maps, tf.float32)
+            # scalars = tf.cast(scalars, tf.float32)
+
+            goose1 = maps
+            goose2 = tf.concat([maps[:, :, :, 4:16], maps[:, :, :, :4], maps[:, :, :, -1:]], axis=3)
+            goose3 = tf.concat([maps[:, :, :, 8:16], maps[:, :, :, :8], maps[:, :, :, -1:]], axis=3)
+            goose4 = tf.concat([maps[:, :, :, 12:16], maps[:, :, :, :12], maps[:, :, :, -1:]], axis=3)
+            # geese = tf.concat([goose1, goose2, goose3, goose4], axis=0)
+
+            x1 = self._residual(goose1, training)
+            # y, z = x1
+            x2 = tf.stop_gradient(self._residual(goose2, training=False))
+            x3 = tf.stop_gradient(self._residual(goose3, training=False))
+            x4 = tf.stop_gradient(self._residual(goose4, training=False))
+            x = tf.concat([x1, x2, x3, x4], axis=-1)
+            # x = x1
+
+            baseline = self._baseline(x)
+            policy_logits = self._logits(x)
+            # baseline = self._baseline(tf.concat([y, z], axis=1))
+            # policy_logits = self._logits(z)
+
+            return policy_logits, baseline
+
+        def get_config(self):
+            pass
 
     class SmallResidualModel(keras.Model):
         def __init__(self, **kwargs):
@@ -332,7 +474,7 @@ def get_actor_critic2():
         def get_config(self):
             pass
 
-    return SmallResidualModel()
+    return ExpModel()
 
 
 def get_actor_critic3():

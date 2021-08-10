@@ -28,7 +28,7 @@ class Collector(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic3()
+            self._model = models.get_actor_critic2()
             self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
@@ -130,8 +130,8 @@ class Collector(Agent, ABC):
                     self._collect(epsilon)
                     # print(f"Num of collects: {num_collects}")
             else:
-                if num_collects < 1000 or num_collects % 50 == 0:
-                    if num_collects == 999:
+                if num_collects < 20000 or num_collects % 50 == 0:
+                    if num_collects == 19999:
                         print("Collector: The last initial random collect.")
                     self._collect(epsilon, is_random=True)
                 else:
@@ -153,8 +153,8 @@ class Evaluator(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic3()
-            self._eval_model = models.get_actor_critic3()
+            self._model = models.get_actor_critic2()
+            self._eval_model = models.get_actor_critic2()
             # self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
