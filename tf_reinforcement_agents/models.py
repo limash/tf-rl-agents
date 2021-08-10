@@ -299,6 +299,10 @@ def get_actor_critic2():
             goose2 = tf.concat([maps[:, :, :, 4:16], maps[:, :, :, :4], maps[:, :, :, -1:]], axis=3)
             goose3 = tf.concat([maps[:, :, :, 8:16], maps[:, :, :, :8], maps[:, :, :, -1:]], axis=3)
             goose4 = tf.concat([maps[:, :, :, 12:16], maps[:, :, :, :12], maps[:, :, :, -1:]], axis=3)
+            # goose1_v = goose1.numpy()
+            # goose2_v = goose2.numpy()
+            # goose3_v = goose3.numpy()
+            # goose4_v = goose4.numpy()
             # geese = tf.concat([goose1, goose2, goose3, goose4], axis=0)
 
             x1 = self._residual(goose1, training)
@@ -474,7 +478,7 @@ def get_actor_critic2():
         def get_config(self):
             pass
 
-    return ExpModel()
+    return SmallResidualModel()
 
 
 def get_actor_critic3():
