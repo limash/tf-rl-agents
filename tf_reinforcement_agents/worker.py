@@ -28,7 +28,7 @@ class Collector(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2()
+            self._model = models.get_actor_critic2(model_type='exp')
             self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
@@ -38,8 +38,16 @@ class Collector(Agent, ABC):
                        tf.ones(self._input_shape[1], dtype=tf.uint8))
         dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
         self._predict(dummy_input)
+
+        # with open('data/data_brick.pickle', 'rb') as file:
+        #     data = pickle.load(file)
+        # self._model.layers[0].set_weights(data['weights'][:66])
+        # self._model.layers[1].set_weights(data['weights'][:66])
+        # self._model.layers[0].trainable = False
         if self._data is not None:
             self._model.set_weights(self._data['weights'])
+            print("Collector: using data from a data/data.pickle file.")
+        # self._model.layers[0].trainable = True
 
     def _dqn_policy(self, obsns, epsilon, info):
         if np.random.rand() < epsilon:
@@ -122,7 +130,7 @@ class Collector(Agent, ABC):
             epsilon = None
             # t1 = time.time()
             if self._data is not None:
-                if num_collects % 50 == 0:
+                if num_collects % 25 == 0:
                     self._collect(epsilon, is_random=True)
                     # print("Episode with a random trajectory was collected; "
                     #       f"Num of collects: {num_collects}")
@@ -130,8 +138,8 @@ class Collector(Agent, ABC):
                     self._collect(epsilon)
                     # print(f"Num of collects: {num_collects}")
             else:
-                if num_collects < 20000 or num_collects % 50 == 0:
-                    if num_collects == 19999:
+                if num_collects < 10000 or num_collects % 25 == 0:
+                    if num_collects == 9999:
                         print("Collector: The last initial random collect.")
                     self._collect(epsilon, is_random=True)
                 else:
@@ -153,8 +161,8 @@ class Evaluator(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2()
-            self._eval_model = models.get_actor_critic2()
+            self._model = models.get_actor_critic2(model_type='exp')
+            self._eval_model = models.get_actor_critic2(model_type='res')
             # self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
@@ -166,9 +174,15 @@ class Evaluator(Agent, ABC):
         self._predict(dummy_input)
         self._eval_predict(dummy_input)
 
+        # with open('data/data_brick.pickle', 'rb') as file:
+        #     data = pickle.load(file)
+        # self._model.layers[0].set_weights(data['weights'][:66])
+        # self._model.layers[0].trainable = False
+
         try:
             with open('data/eval/data.pickle', 'rb') as file:
                 data = pickle.load(file)
+                print("Evaluator: using data form a data/eval/data.pickle file.")
             self._eval_model.set_weights(data['weights'])
             # self._model.set_weights(data['weights'])
         except FileNotFoundError:
@@ -229,8 +243,9 @@ class Evaluator(Agent, ABC):
                 if weights is None:
                     time.sleep(1)
                 else:
+                    # print(f" Variables: {len(self._model.trainable_variables)}")
                     self._model.set_weights(weights)
                     break
 
             wins, losses, draws = self.evaluate_episodes()
-            print(f"Evaluator: Wins: {wins}; Losses: {losses}; Draws: {draws}; Model from a step: {step}")
+            print(f"Evaluator: Wins: {wins}; Losses: {losses}; Draws: {draws}; Model from a step: {step}.")

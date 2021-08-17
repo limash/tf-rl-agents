@@ -1,3 +1,5 @@
+import pickle
+
 import tensorflow as tf
 
 from tf_reinforcement_agents.abstract_agent import Agent
@@ -43,15 +45,23 @@ class ACAgent(Agent):
             raise LookupError
 
         # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-        self._model = models.get_actor_critic2()
+        self._model = models.get_actor_critic2(model_type='exp')
         # launch a model once to define structure
         dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
                        tf.ones(self._input_shape[1], dtype=tf.uint8))
         dummy_input = tf.nest.map_structure(lambda x: tf.expand_dims(x, axis=0), dummy_input)
         self._predict(dummy_input)
+
+        # with open('data/data_brick.pickle', 'rb') as file:
+        #     data = pickle.load(file)
+        # self._model.layers[0].set_weights(data['weights'][:66])
+        # self._model.layers[1].set_weights(data['weights'][:66])
+        # self._model.layers[0].trainable = False
         # continue a model training
         if self._data is not None:
             self._model.set_weights(self._data['weights'])
+            print("Continue the model training.")
+        # self._model.layers[0].trainable = True
 
         self._is_debug = config["debug"]
         if not config["debug"]:

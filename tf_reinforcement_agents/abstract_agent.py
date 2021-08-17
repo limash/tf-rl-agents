@@ -694,13 +694,14 @@ class Agent(abc.ABC):
                 items_created.append(items_total)
 
             if items_created[-1] < self._sample_batch_size:
-                print("Sleeping")
+                print("Waiting to collect enough data.")
                 time.sleep(1)
                 continue
             else:
                 break
 
         weights = self._model.get_weights()
+        # print(f" Variables: {len(self._model.trainable_variables)}")
         ray.get(self._workers_info.set_current_weights.remote((weights, 0)))
 
         # the main training loop
