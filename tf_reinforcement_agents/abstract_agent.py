@@ -770,6 +770,10 @@ class Agent(abc.ABC):
                 with open(f'data/data{step_counter}.pickle', 'wb') as f:
                     pickle.dump(data, f, protocol=4)
 
+                # with open('data/checkpoint', 'w') as text_file:
+                #     checkpoint = self._replay_memory_client.checkpoint()
+                #     print(checkpoint, file=text_file)
+
             # update target model weights
             if self._target_model and step_counter % target_model_update_interval == 0:
                 weights = self._model.get_weights()

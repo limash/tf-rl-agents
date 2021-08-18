@@ -89,7 +89,7 @@ CONF_ActorCritic = {
     # "buffer": "n_points",
     # "all_trajectories": False,
     "buffer_size": 4000000,
-    "batch_size": 90,
+    "batch_size": 100,
     "init_episodes": 25,  # not required by 'complex' setup
     #
     "iterations_number": 100000,
