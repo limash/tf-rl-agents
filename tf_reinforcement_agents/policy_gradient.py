@@ -45,7 +45,7 @@ class ACAgent(Agent):
             raise LookupError
 
         # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-        self._model = models.get_actor_critic2(model_type='res')
+        self._model = models.get_actor_critic2(model_type='exp')
         # launch a model once to define structure
         dummy_input = (tf.ones(self._input_shape[0], dtype=tf.uint8),
                        tf.ones(self._input_shape[1], dtype=tf.uint8))

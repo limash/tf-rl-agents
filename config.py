@@ -88,13 +88,13 @@ CONF_ActorCritic = {
     "n_points": 33,  # if full episode, it collects an episode first and then splits it to n_points pieces
     # "buffer": "n_points",
     # "all_trajectories": False,
-    "buffer_size": 4000000,
+    "buffer_size": 3000000,
     "batch_size": 100,
     "init_episodes": 25,  # not required by 'complex' setup
     #
     "iterations_number": 100000,
     "save_interval": 2000,
-    "entropy_c": tf.constant(7.e-3),
+    "entropy_c": tf.constant(2.e-3),
     "entropy_c_decay": tf.constant(0.3),
     # "optimizer": tf.keras.optimizers.Adam(lr=1.e-6),
     "optimizer": tfa.optimizers.AdamW(weight_decay=1.e-5, learning_rate=1.e-6),

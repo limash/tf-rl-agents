@@ -28,7 +28,7 @@ class Collector(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2(model_type='res')
+            self._model = models.get_actor_critic2(model_type='exp')
             self._policy = self._pg_policy
         else:
             self._model = models.get_dqn(self._input_shape, self._n_outputs, is_duel=False)
@@ -161,7 +161,7 @@ class Evaluator(Agent, ABC):
 
         if self._is_policy_gradient:
             # self._model = models.get_actor_critic(self._input_shape, self._n_outputs)
-            self._model = models.get_actor_critic2(model_type='res')
+            self._model = models.get_actor_critic2(model_type='exp')
             self._eval_model = models.get_actor_critic2(model_type='res')
             # self._policy = self._pg_policy
         else:

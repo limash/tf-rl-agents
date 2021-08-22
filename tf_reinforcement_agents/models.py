@@ -241,24 +241,39 @@ def get_actor_critic2(model_type='res'):
             batch, x, y, _ = batch_input_shape
             return [batch, x, y, self._filters]
 
+    class PureResidualUnit(keras.layers.Layer):
+        def __init__(self, filters, initializer, **kwargs):
+            super().__init__(**kwargs)
+
+            self._filters = filters
+            self._conv = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False)
+            self._norm = keras.layers.BatchNormalization()
+
+        def call(self, inputs, training=False, **kwargs):
+            x = inputs
+            x = circular_padding(x)
+            x = self._conv(x)
+            x = self._norm(x, training=training)
+            return x
+
     class CrossUnit(keras.layers.Layer):
         def __init__(self, filters, initializer, size, **kwargs):
             super().__init__(**kwargs)
 
             self._height, self._width = size
             self._filters = filters
-            self._conv_col = keras.layers.Conv2D(filters/4, (self._height, 1),
+            self._conv_col = keras.layers.Conv2D(filters / 4, (self._height, 1),
                                                  kernel_initializer=initializer, use_bias=False)
-            self._conv_row = keras.layers.Conv2D(filters/4, (1, self._width),
+            self._conv_row = keras.layers.Conv2D(filters / 4, (1, self._width),
                                                  kernel_initializer=initializer, use_bias=False)
-            self._conv = keras.layers.Conv2D(filters/2, 3, kernel_initializer=initializer, use_bias=False)
+            self._conv = keras.layers.Conv2D(filters / 2, 3, kernel_initializer=initializer, use_bias=False)
             self._norm = keras.layers.BatchNormalization()
 
         def call(self, inputs, training=False, **kwargs):
             x = inputs
-            y = height_padding(x, self._height//2)
+            y = height_padding(x, self._height // 2)
             y = self._conv_col(y)
-            z = width_padding(x, self._width//2)
+            z = width_padding(x, self._width // 2)
             z = self._conv_row(z)
             o = circular_padding(x)
             o = self._conv(o)
@@ -271,22 +286,41 @@ def get_actor_critic2(model_type='res'):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
+            # cross_filters = 64
+            # cross_layers = 3
             filters = 32
             layers = 12
 
-            # initializer = keras.initializers.HeNormal
             initializer = keras.initializers.VarianceScaling(scale=2.0, mode='fan_in', distribution='truncated_normal')
             initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
-            activation = keras.activations.elu
+            self._activation = keras.activations.relu
 
-            self._conv = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer)
-            self._norm = keras.layers.BatchNormalization()
-            self._activation = keras.layers.ELU()
-            self._residual_block = [ResidualUnit(filters, initializer, activation) for _ in range(layers)]
+            # self._first_cross = CrossUnit(cross_filters, initializer, (7, 11))
+            # self._cross_block = [CrossUnit(cross_filters, initializer, (7, 11)) for _ in range(cross_layers)]
+            self._first_res = PureResidualUnit(filters, initializer)
+            self._residual_block = [PureResidualUnit(filters, initializer) for _ in range(layers)]
 
-            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            # self._conv1 = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False)
+            # self._norm1 = keras.layers.BatchNormalization()
+            # self._conv2 = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False)
+            # self._norm2 = keras.layers.BatchNormalization()
+            # self._conv3 = keras.layers.Conv2D(filters, 3, kernel_initializer=initializer, use_bias=False)
+            # self._norm3 = keras.layers.BatchNormalization()
+
+            # self._flatten = keras.layers.Flatten()
+
+            # self._dense_baseline = keras.layers.Dense(100, kernel_initializer=initializer, use_bias=False)
+            # self._norm_baseline = keras.layers.BatchNormalization()
             self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
                                                 activation=keras.activations.tanh)
+
+            # self._dense_logits = keras.layers.Dense(100, kernel_initializer=initializer, use_bias=False)
+            # self._norm_logits = keras.layers.BatchNormalization()
+            self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+
+            # self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
+            # self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
+            #                                     activation=keras.activations.tanh)
 
         def call(self, inputs, training=False, mask=None):
             maps, scalars = inputs
@@ -295,13 +329,19 @@ def get_actor_critic2(model_type='res'):
 
             x = maps
 
-            x = circular_padding(x)
-            x = self._conv(x)
-            x = self._norm(x, training=training)
-            x = self._activation(x)
+            # x = self._first_cross(x, training=training)
+            # x = self._activation(x)
+            # for layer in self._cross_block:
+            #     y = layer(x, training=training)
+            #     z = y + x
+            #     x = self._activation(z)
 
+            x = self._first_res(x, training=training)
+            x = self._activation(x)
             for layer in self._residual_block:
-                x = layer(x, training=training)
+                y = layer(x, training=training)
+                z = y + x
+                x = self._activation(z)
 
             shape_x = tf.shape(x)
             y = tf.reshape(x, (shape_x[0], -1, shape_x[-1]))
@@ -313,69 +353,35 @@ def get_actor_critic2(model_type='res'):
             z = tf.reduce_sum(z, axis=1)
 
             baseline = self._baseline(tf.concat([y, z], axis=1))
-            policy_logits = self._logits(z)
+            logits = self._logits(z)
 
-            return policy_logits, baseline
+            # x = self._conv1(x)
+            # x = self._norm1(x, training=training)
+            # x = self._activation(x)
+            # x = self._conv2(x)
+            # x = self._norm2(x, training=training)
+            # x = self._activation(x)
+            # x = self._conv3(x)
+            # x = self._norm3(x, training=training)
+            # x = self._activation(x)
+            # x = self._flatten(x)
+
+            # baseline = x
+            # baseline = self._dense_baseline(baseline)
+            # baseline = self._norm_baseline(baseline, training=training)
+            # baseline = self._activation(baseline)
+            # baseline = self._baseline(baseline)
+
+            # logits = x
+            # logits = self._dense_logits(logits)
+            # logits = self._norm_logits(logits, training=training)
+            # logits = self._activation(logits)
+            # logits = self._logits(logits)
+
+            return logits, baseline
 
         def get_config(self):
             pass
-
-    # class ExpModel(keras.Model):
-    #     def __init__(self, **kwargs):
-    #         super().__init__(**kwargs)
-
-    #         filters = 32
-    #         cross_layers = 6
-    #         res_layers = 6
-
-    #         # initializer = keras.initializers.HeNormal
-    #         initializer = keras.initializers.VarianceScaling(scale=2.0, mode='fan_in', distribution='truncated_normal')
-    #         initializer_random = keras.initializers.random_uniform(minval=-0.03, maxval=0.03)
-    #         self._activation = keras.activations.elu
-    #         # self._activation = keras.layers.ReLU()
-
-    #         self._first_cross = CrossUnit(filters, initializer, (7, 11))
-    #         self._cross_block = [CrossUnit(filters, initializer, (7, 11)) for _ in range(cross_layers)]
-    #         self._residual_block = [ResidualUnit(filters, initializer, self._activation) for _ in range(res_layers)]
-
-    #         self._logits = keras.layers.Dense(4, kernel_initializer=initializer_random)
-    #         self._baseline = keras.layers.Dense(1, kernel_initializer=initializer_random,
-    #                                             activation=keras.activations.tanh)
-
-    #     def call(self, inputs, training=False, mask=None):
-    #         maps, scalars = inputs
-    #         maps = tf.cast(maps, tf.float32)
-    #         # scalars = tf.cast(scalars, tf.float32)
-
-    #         x = maps
-
-    #         x = self._first_cross(x, training=training)
-    #         x = self._activation(x)
-
-    #         for layer in self._cross_block:
-    #             y = layer(x, training=training)
-    #             z = y + x
-    #             x = self._activation(z)
-
-    #         for layer in self._residual_block:
-    #             x = layer(x, training=training)
-
-    #         shape_x = tf.shape(x)
-    #         y = tf.reshape(x, (shape_x[0], -1, shape_x[-1]))
-    #         y = tf.reduce_mean(y, axis=1)
-
-    #         z = (x * maps[:, :, :, :1])
-    #         shape_z = tf.shape(z)
-    #         z = tf.reshape(z, (shape_z[0], -1, shape_z[-1]))
-    #         z = tf.reduce_sum(z, axis=1)
-
-    #         baseline = self._baseline(tf.concat([y, z], axis=1))
-    #         policy_logits = self._logits(z)
-
-    #         return policy_logits, baseline
-
-    #     def get_config(self):
-    #         pass
 
     class ResidualBase(keras.Model):
         def __init__(self, **kwargs):
